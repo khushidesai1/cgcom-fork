@@ -8,5 +8,5 @@ Modified to be an installable Python package for benchmarking purposes.
 You can install this package directly from GitHub:
 
 ```bash
-pip install git+https://github.com/khushidesai/cgcom-fork.git
+pip install git+https://github.com/khushidesai1/cgcom-fork.git
 ```
