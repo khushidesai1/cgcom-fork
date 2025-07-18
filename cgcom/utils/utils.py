@@ -48,10 +48,46 @@ def convert_anndata_to_df(anndata_filepath):
     gene_expression_df = pd.DataFrame(gene_expression, index=adata.obs_names, columns=adata.var_names)
     return gene_expression_df
 
-def build_graph():
-    pass
+def build_graph(cell_locations_df, directed=True):
+    """
+    Build the graph.
+    Args:
+        cell_locations (list): List of cell locations.
+        directed (bool): Whether the graph is directed.
+    Returns:
+        G (nx.Graph): The graph.
+        disdict (dict): Dictionary containing the distances between cells.
+    """
+    if directed:
+        G = nx.DiGraph()
+    else:
+        G = nx.Graph()
+    i = 0    
+    locationlist = []
+    nodeidlist = []
+    minlocation = 9999999999999
+    maxlocation = 0    
+    for location in cell_locations_df[["x", "y"]].values:
+        x = location[0]
+        y = location[1]
+        G.add_node(i, pos=(x, y))
+        i += 1
+        alldistancelist = []
+        for location in locationlist:
+            alldistancelist.append(math.dist(location, [x, y]))
+        maxlocation = max(alldistancelist+[maxlocation])
+        minlocation = min(alldistancelist+[minlocation])
+        locationlist.append([x, y])
+        nodeidlist.append(cell_locations_df.index[i])
+    disdict = {}
+    for i in range(len(locationlist)): 
+        disdict[i] = {}
+        for j in range(i+1, len(locationlist)):
+            distance = math.dist(locationlist[i], locationlist[j])
+            disdict[i][j] = distance
+    return G, disdict, locationlist, nodeidlist, minlocation, maxlocation
 
-def get_cell_label_dict(gene_expression_df):
+def get_cell_label_dict(anndata_filepath, labels_key):
     """
     Get the cell label dictionary.
     Args:
@@ -59,10 +95,24 @@ def get_cell_label_dict(gene_expression_df):
     Returns:
         cell_label_dict (dict): Dictionary containing the cell label data.
     """
-
-def get_cell_locations(anndata_filepath):
     adata = sc.read_h5ad(anndata_filepath)
-    
+    cell_label_dict = {}
+    for cell_id, cell_label in zip(adata.obs_names, adata.obs[labels_key]):
+        cell_label_dict[cell_id] = cell_label
+    return cell_label_dict
+
+def get_cell_locations_df(anndata_filepath):
+    """
+    Get the cell locations.
+    Args:
+        anndata_filepath (str): Path to the anndata file.
+    Returns:
+        cell_locations (np.ndarray): Array containing the cell locations.
+    """
+    adata = sc.read_h5ad(anndata_filepath)
+    cell_locations = adata.obsm["spatial"].values
+    cell_locations_df = pd.DataFrame(cell_locations, index=adata.obs_names, columns=["x", "y"])
+    return cell_locations_df
 
 # Shit below:
 
@@ -91,41 +141,6 @@ def loaddataset(suffixdatasetname, datasetprefixname, directed):
 
 def eudlidistance(node1, node2):
     return math.dist(node1, node2)
-
-def buildgraph(nodefilelocation, sep="\t", title=False, directed=True):
-    if directed:
-        G = nx.DiGraph()
-    else:
-        G = nx.Graph()
-    i = 0    
-    locationlist = []
-    nodeidlist = []
-    minlocation = 9999999999999
-    maxlocation = 0    
-    with open(nodefilelocation, "r") as nodefile:
-        for line in nodefile.readlines():
-            linedata = line.strip().split(sep)
-            if title:
-                title = False
-            else:                
-                x = float(linedata[1])
-                y = float(linedata[2])
-                G.add_node(i, pos=(x, y), label=linedata[0])
-                i += 1
-                alldistancelist = []
-                for location in locationlist:
-                    alldistancelist.append(eudlidistance(location, [x, y]))
-                maxlocation = max(alldistancelist+[maxlocation])
-                minlocation = min(alldistancelist+[minlocation])
-                locationlist.append([x, y])
-                nodeidlist.append(linedata[0])
-    disdict = {}
-    for i in range(len(locationlist)): 
-        disdict[i] = {}
-        for j in range(i+1, len(locationlist)):
-            distance = eudlidistance(locationlist[i], locationlist[j])
-            disdict[i][j] = distance
-    return G, disdict, locationlist, nodeidlist, minlocation, maxlocation
 
 def readdedgestoGraph(G, locationlist, disdict, neighborthresholdratio, minlocation, maxlocation, directed):
     neighborthreshold = minlocation+(maxlocation-minlocation)*neighborthresholdratio
