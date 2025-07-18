@@ -26,9 +26,9 @@ def train_model(
     hyperparameters,
     dataset_path,
     output_model_path=None,
-    lr_filepath="./Knowledge/CellPhoneDB_split.csv",
-    tf_filepath="./Knowledge/TFlist.txt",
-    output_dir="./Script/FeaturelevelGAT/tmp/",
+    lr_filepath="./knowledge/CellPhoneDB_split.csv",
+    tf_filepath="./knowledge/TFlist.txt",
+    output_dir="./saved_models",
     dataset_name="default",
     labels_key="cell_type"
 ):
