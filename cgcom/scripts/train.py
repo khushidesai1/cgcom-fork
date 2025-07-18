@@ -4,10 +4,10 @@ import pickle
 import random
 import math
 import networkx as nx
-from utils.utils import (
-    get_hyperparameters, convert_anndata_to_df, get_cell_label_dict, build_graph,
+from utils import (
+    get_hyperparameters, convert_anndata_to_df, get_cell_label_dict,
     load_csv_and_create_dict, generate_sub_dictionary, loadtf, pick_random_common_elements,
-    generateMaskindex, formsubdataframe, getcelllabel, buildgraph, readdedgestoGraph,
+    generateMaskindex, formsubdataframe, buildgraph, readdedgestoGraph,
     generate_subgraphs, generate_graph
 )
 from torch_geometric.data import DataLoader
