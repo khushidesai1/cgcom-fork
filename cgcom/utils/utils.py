@@ -1,29 +1,306 @@
-import pickle
-import numpy as np
-from tqdm import tqdm
-import collections
-import random
-import seaborn as sns
 import pandas as pd
-import matplotlib.pyplot as plt
 import os
 import networkx as nx
 import math
-import json
-import statistics
+import pickle
+import pandas as pd
+from tqdm import tqdm
+from torch.utils.data import Dataset
 import torch
+import numpy as np
+import random
+from torch_geometric.data import Data, DataLoader
 import scanpy as sc
+import statistics
 
+
+def load_large_pickle(file_path, chunk_size=1024):
+    # Get the size of the file in bytes
+    file_size = os.path.getsize(file_path)
+
+    # Initialize the progress bar
+    pbar = tqdm(total=file_size, unit='B', unit_scale=True, desc='Reading pickle file')
+
+    # Open the file in binary read mode
+    with open(file_path, 'rb') as file:
+        # Initialize an empty bytes object to store chunks
+        file_bytes = b''
+
+        # Read the file in chunks
+        for chunk in iter(lambda: file.read(chunk_size), b''):
+            file_bytes += chunk
+            pbar.update(len(chunk))
+
+    # Close the progress bar
+    pbar.close()
+
+    # Load the data from the read bytes
+    data = pickle.loads(file_bytes)
+    return data
+
+
+def generate_graph(edges, features, labels):
+    dataset = []
+    numberoflabels = 0
+    for node_features, edge_index, label in tqdm(zip(features, edges, labels), desc="Generate graphdata", total=len(labels)):
+        numberoflabels = max(numberoflabels, label)
+        dataset.append(Data(x=torch.tensor(node_features), edge_index=torch.tensor(edge_index, dtype=torch.int64), y=torch.tensor(label), num_nodes=len(node_features)))
+    return dataset, numberoflabels + 1
+
+
+def get_file_line_count(file_path):
+    with open(file_path, 'r', encoding='utf-8') as f:
+        for i, _ in enumerate(f, 1):
+            pass
+    return i
+
+
+def read_csv_with_progress(file_path, chunk_size=1000):
+    total_lines = get_file_line_count(file_path) - 1  # Subtract 1 for the header
+    pbar = tqdm(total=total_lines, desc="Reading CSV")
+
+    chunks = pd.read_csv(file_path, chunksize=chunk_size)
+    df_list = []
+    for chunk in chunks:
+        df_list.append(chunk)
+        pbar.update(chunk.shape[0])
+
+    pbar.close()
+    return pd.concat(df_list, ignore_index=False)
+
+
+def loadscfile(filepath):
+    df = read_csv_with_progress(filepath)
+    df.set_index(df.columns[0], inplace=True)
+    return df
+
+
+def loadtf(file_path):
+    tfs = []
+    with open(file_path, "r") as tffile:
+        for line in tffile.readlines():
+            tfs.append(line.strip().upper())
+    return tfs
+
+
+def load_csv_and_create_dict(file_path):
+    # Load the CSV file
+    df = pd.read_csv(file_path)
+    # Check if the dataframe has the required columns
+    if 'Ligand' in df.columns and 'Receptor' in df.columns:
+        # Create a dictionary where receptor is the key and ligands are values
+        receptor_ligand_dict = df.groupby('Receptor')['Ligand'].apply(list).to_dict()
+        return receptor_ligand_dict
+    else:
+        return "Error: CSV file does not have the required 'ligand' and 'receptor' columns."
+
+
+def generate_sub_dictionary(receptor_ligand_dict, gene_list):
+    # Create a sub-dictionary for the given list of genes
+    sub_dict = {gene: receptor_ligand_dict[gene] for gene in gene_list if gene in receptor_ligand_dict}
+    keys_to_remove = []
+    for key, values in sub_dict.items():
+        sub_dict[key] = [gene for gene in values if gene in gene_list]
+        if len(sub_dict[key]) == 0:
+            keys_to_remove.append(key)
+    for key in keys_to_remove:
+        del sub_dict[key]
+    return sub_dict
+
+
+def pick_random_keys_with_elements(dictionary, genelist, n=25, max_elements=2):
+    # Randomly select 'n' keys from the dictionary
+    selected_keys = random.sample([gene for gene in list(dictionary.keys()) if gene in genelist], min(n, len(dictionary)))
+
+    # For each selected key, randomly pick up to 'max_elements' from its associated list
+    selected_dict = {}
+    for key in selected_keys:
+        # Filter elements that are in genelist
+        filtered_elements = [gene for gene in dictionary[key] if gene in genelist]
+
+        # Determine the number of elements to sample
+        num_elements_to_sample = min(max_elements, len(filtered_elements))
+
+        # Sample elements if there are any to sample from
+        if num_elements_to_sample > 0:
+            selected_dict[key] = random.sample(filtered_elements, num_elements_to_sample)
+
+    return selected_dict
+
+
+def pick_random_common_elements(list1, list2, n=10000):
+    # Find the common elements between the two lists
+    common_elements = set(list1).intersection(list2)
+
+    # If there are enough common elements, randomly pick 'n' of them
+    if len(common_elements) >= n:
+        return random.sample(list(common_elements), n)
+    else:
+        # If not enough common elements, return as many as possible
+        return random.sample(list(common_elements), len(common_elements))
+
+
+def formsubdataframe(df, listofcolumn):
+    return df[listofcolumn]
+
+
+def eudlidistance(node1, node2):
+    return math.dist(node1, node2)
+
+
+def buildgraph(nodefilelocation, sep="\t", title=False):
+    G = nx.Graph()
+    i = 0
+    locationlist = []
+    nodeidlist = []
+    minlocation = 9999999999999
+    maxlocation = 0
+    with open(nodefilelocation, "r") as nodefile:
+        for line in tqdm(nodefile.readlines(), desc="Loading node to graph"):
+            linedata = line.strip().split(sep)
+            if title:
+                title = False
+            else:
+                x = float(linedata[1])
+                y = float(linedata[2])
+                G.add_node(i, pos=(x, y), label=linedata[0])
+                i += 1
+                alldistancelist = []
+                for location in locationlist:
+                    alldistancelist.append(eudlidistance(location, [x, y]))
+                maxlocation = max(alldistancelist + [maxlocation])
+                minlocation = min(alldistancelist + [minlocation])
+                locationlist.append([x, y])
+                nodeidlist.append(linedata[0])
+    disdict = {}
+    for i in tqdm(range(len(locationlist)), desc="Compute disdict"):
+        disdict[i] = {}
+        for j in range(i + 1, len(locationlist)):
+            distance = eudlidistance(locationlist[i], locationlist[j])
+            disdict[i][j] = distance
+
+    return G, disdict, locationlist, nodeidlist, minlocation, maxlocation
+
+
+def readdedgestoGraph(G, locationlist, disdict, neighborthresholdratio, minlocation, maxlocation):
+    neighborthreshold = minlocation + (maxlocation - minlocation) * neighborthresholdratio
+    G.remove_edges_from(list(G.edges()))
+    edgelist = []
+    for i in tqdm(range(len(locationlist)), desc="Adding edge"):
+        for j in range(i + 1, len(locationlist)):
+            distance = disdict[i][j]
+            if distance <= neighborthreshold:
+                edgelist.append([i, j])
+                G.add_edge(i, j)
+
+    return G, edgelist
+
+
+def generate_subgraphs(G):
+    subgraphs = {}
+    for node in tqdm(G.nodes(), desc="Generate subgraphs"):
+        # Get the neighbors of the current node
+        neighbors = list(nx.neighbors(G, node))
+        # Create a subgraph with the current node and its neighbors
+        if len(neighbors) > 0:
+            subgraph_nodes = [node] + neighbors
+            subgraph = G.subgraph(subgraph_nodes)
+            # Store the subgraph
+            subgraphs[node] = subgraph
+
+    return subgraphs
+
+
+def loadlocation(filepath):
+    return pd.read_csv(filepath, index_col=0)
+
+
+def loadcelltype(filepath):
+    return pd.read_csv(filepath, index_col=0, header=None)
+
+
+def get_adjacency_matrix(G):
+    # Get the adjacency matrix in sparse format
+    adj_matrix_sparse = nx.adjacency_matrix(G)
+
+    # Convert to a dense format (numpy array)
+    adj_matrix_dense = adj_matrix_sparse.toarray()
+
+    return adj_matrix_dense
+
+
+def generateMaskindex(ligands, lrdictionary):
+    rownumber = 0
+    mask_index = []
+    for key, values in lrdictionary.items():
+        for value in values:
+            columnnumber = ligands.index(value)
+            mask_index.append([rownumber, columnnumber])
+        rownumber += 1
+    return mask_index
+
+
+def getcelllabel(filepath, sep=","):
+    cellidlabel = {}
+    with open(filepath, 'r') as file:
+        filelines = file.readlines()
+        for line in filelines:
+            linedata = line.strip().split(sep)
+            cellidlabel[linedata[0]] = int(linedata[1])
+    return cellidlabel
+
+
+def loadlrTF(filepath, sep="\t"):
+    ls, rs, tfs = [], [], []
+
+    with open(filepath, 'r') as file:
+        filelines = file.readlines()
+        for line in filelines:
+            linedata = line.strip().split(sep)
+            for r in linedata[1].split(","):
+                ls.append(linedata[0])
+                rs.append(r)
+                tfs.append(linedata[2])
+    return pd.DataFrame({"L": ls,
+                         "R": rs,
+                         "TF": tfs})
+
+
+def getTFsfromlr(lrTFdf, ligand, receptor):
+    filtered_df = lrTFdf[(lrTFdf['L'] == ligand) & (lrTFdf['R'] == receptor)]
+    return filtered_df['TF'].tolist()
+
+
+def load_data(filepath):
+    """Load data from a text file."""
+    with open(filepath, 'r') as file:
+        lines = file.read().splitlines()[1:]  # Skip the header line
+    data_dict = {line.split('\t')[0]: float(line.split('\t')[1]) for line in lines}
+    return data_dict
+
+
+def readcolor():
+    numberofcolor = 50
+    suffixdatasetname = "./Knowledge/colordict.txt"
+    colordict = []
+    if os.path.exists(suffixdatasetname):
+        with open(suffixdatasetname, "r") as colorfile:
+            for line in colorfile.readlines():
+                colordict.append(line.strip())
+    else:
+        with open(suffixdatasetname, "w") as colorfile:
+            for i in range(numberofcolor):
+                color = "#" + ''.join([random.choice('0123456789ABCDEF') for j in range(6)])
+                colordict.append(color)
+                colorfile.write(color + "\n")
+
+    return colordict
+
+
+# Essential functions from original cgcom/utils/utils.py needed for train function
 def get_hyperparameters(lr=0.01, num_epochs=100, batch_size=128, train_ratio=0.05, val_ratio=0.1, neighbor_threshold_ratio=0.01):
     """
     Initialize the hyperparameters for the CGCom model.
-    Args:
-        lr (float): Learning rate for the optimizer.
-        num_epochs (int): Number of epochs to train the model.
-        batch_size (int): Batch size for training and validation.
-        train_ratio (float): Ratio of training data.
-        val_ratio (float): Ratio of validation data.
-        neighbor_threshold_ratio (float): Threshold ratio for building the graph.
     """
     hyperparameters = {
         "learning_rate": lr,
@@ -35,37 +312,48 @@ def get_hyperparameters(lr=0.01, num_epochs=100, batch_size=128, train_ratio=0.0
     }
     return hyperparameters
 
+
 def convert_anndata_to_df(adata):
     """
     Convert anndata to dataframe.
-    Args:
-        anndata_filepath (str): Path to the anndata file.
-    Returns:
-        gene_expression_df (pd.DataFrame): DataFrame containing the gene expression data.
     """
     gene_expression = adata.X.toarray()
     gene_expression_df = pd.DataFrame(gene_expression, index=adata.obs_names, columns=adata.var_names)
     return gene_expression_df
 
+
+def get_cell_label_dict(adata, labels_key):
+    """
+    Get the cell label dictionary.
+    """
+    cell_label_dict = {}
+    for cell_id, cell_label in zip(adata.obs_names, adata.obs[labels_key]):
+        cell_label_dict[cell_id] = cell_label
+    return cell_label_dict
+
+
+def get_cell_locations_df(adata):
+    """
+    Get the cell locations.
+    """
+    cell_locations = adata.obsm["spatial"]
+    cell_locations_df = pd.DataFrame(cell_locations, index=adata.obs_names, columns=["x", "y"])
+    return cell_locations_df
+
+
 def build_graph(cell_locations_df, directed=True):
     """
     Build the graph.
-    Args:
-        cell_locations (list): List of cell locations.
-        directed (bool): Whether the graph is directed.
-    Returns:
-        G (nx.Graph): The graph.
-        disdict (dict): Dictionary containing the distances between cells.
     """
     if directed:
         G = nx.DiGraph()
     else:
         G = nx.Graph()
-    i = 0    
+    i = 0
     locationlist = []
     nodeidlist = []
     minlocation = 9999999999999
-    maxlocation = 0    
+    maxlocation = 0
     for location in cell_locations_df[["x", "y"]].values:
         x = location[0]
         y = location[1]
@@ -74,315 +362,14 @@ def build_graph(cell_locations_df, directed=True):
         alldistancelist = []
         for location in locationlist:
             alldistancelist.append(math.dist(location, [x, y]))
-        maxlocation = max(alldistancelist+[maxlocation])
-        minlocation = min(alldistancelist+[minlocation])
+        maxlocation = max(alldistancelist + [maxlocation])
+        minlocation = min(alldistancelist + [minlocation])
         locationlist.append([x, y])
-        nodeidlist.append(cell_locations_df.index[i])
+        nodeidlist.append(cell_locations_df.index[i-1])
     disdict = {}
-    for i in range(len(locationlist)): 
+    for i in range(len(locationlist)):
         disdict[i] = {}
-        for j in range(i+1, len(locationlist)):
+        for j in range(i + 1, len(locationlist)):
             distance = math.dist(locationlist[i], locationlist[j])
             disdict[i][j] = distance
     return G, disdict, locationlist, nodeidlist, minlocation, maxlocation
-
-def get_cell_label_dict(adata, labels_key):
-    """
-    Get the cell label dictionary.
-    Args:
-        cell_label_filepath (str): Path to the cell label file.
-    Returns:
-        cell_label_dict (dict): Dictionary containing the cell label data.
-    """
-    cell_label_dict = {}
-    for cell_id, cell_label in zip(adata.obs_names, adata.obs[labels_key]):
-        cell_label_dict[cell_id] = cell_label
-    return cell_label_dict
-
-def get_cell_locations_df(adata):
-    """
-    Get the cell locations.
-    Args:
-        anndata_filepath (str): Path to the anndata file.
-    Returns:
-        cell_locations (np.ndarray): Array containing the cell locations.
-    """
-    cell_locations = adata.obsm["spatial"].values
-    cell_locations_df = pd.DataFrame(cell_locations, index=adata.obs_names, columns=["x", "y"])
-    return cell_locations_df
-
-def load_dataset(anndata_filepath, labels_key, dataset_name,directed=True):
-    adata = sc.read_h5ad(anndata_filepath)
-    cell_locations_df = get_cell_locations_df(adata)
-    gene_expression_df = convert_anndata_to_df(adata)
-    cell_label_dict = get_cell_label_dict(adata, labels_key)
-    G, disdict, locationlist, nodeidlist, minlocation, maxlocation = build_graph(cell_locations_df, directed=directed)
-    pickle_output_path = f"{dataset_name}_raw_sub_graph.pkl"
-    if os.path.exists(pickle_output_path):
-        with open(pickle_output_path, 'rb') as f:
-            G, disdict, locationlist, nodeidlist, minlocation, maxlocation = pickle.load(f)
-    else:
-        G, disdict, locationlist, nodeidlist, minlocation, maxlocation = build_graph(cell_locations_df, directed=directed)
-        with open(pickle_output_path, 'wb') as f:
-            pickle.dump([G, disdict, locationlist, nodeidlist, minlocation, maxlocation], f)
-    return locationlist, disdict, minlocation, maxlocation, G, gene_expression_df.values, cell_label_dict.values, nodeidlist
-
-def meanvaluep(suffixdatasetname, values, lrkey, i, j, scorelistlr):
-    output = suffixdatasetname+"_GAT_random_pval/"+str(i)+"_"+str(j)+"_"+lrkey+"_pval.pkl"
-    meanvalue = max(statistics.mean(values), 0)
-    with open(output, 'wb') as f:  
-        pickle.dump(1- (sum(i > meanvalue for i in scorelistlr) / len(scorelistlr)), f)
-
-def readdedgestoGraph(G, locationlist, disdict, neighborthresholdratio, minlocation, maxlocation, directed):
-    neighborthreshold = minlocation+(maxlocation-minlocation)*neighborthresholdratio
-    G.remove_edges_from(list(G.edges()))
-    
-    edgelist = []   
-    for i in range(len(locationlist)):        
-        for j in range(i+1, len(locationlist)):
-            distance = disdict[i][j]
-            if distance <= neighborthreshold:
-                edgelist.append([i, j])
-                G.add_edge(i, j)
-                if directed:
-                    edgelist.append([j, i])
-                    G.add_edge(j, i)
-    return G, edgelist
-    
-def getcelllabel(filepath, sep=","):
-    cellidlabel = {}    
-    with open(filepath, 'r') as file:
-        filelines = file.readlines()
-        for line in filelines:
-            linedata = line.strip().split(sep)
-            cellidlabel[linedata[0]] = int(linedata[1])
-    return cellidlabel
-
-def loadlr(filepath="./knowledge/allr.csv", sep=",", title=True, lcol=0, rcol=1):
-    lrs = []
-    receptordict = {}
-    allgeneset = []
-    with open(filepath, "r") as LRS:
-        lines = LRS.readlines()
-        for line in lines:            
-            linedata = line.strip().split(sep)
-            if title:
-                title = False
-            else:
-                l = linedata[lcol].strip().upper()
-                r = linedata[rcol].strip().upper()
-                if r in receptordict:
-                    receptordict[r].append(l)
-                else:
-                    receptordict[r] = []
-                    receptordict[r].append(l)
-                lrs.append((l, r))
-                allgeneset.append(l)
-                allgeneset.append(r)
-    ligandlist = [lr[0] for lr in lrs]
-    allligands = list(set(ligandlist))
-
-    return lrs, allgeneset, receptordict, allligands
-
-def splitetrainingvalidationtestdataset(labels, trainingratio, valratio):
-    idx_train = []
-    idx_val = []
-    idx_test = []
-    validationlabel = {}
-    traininglabel = {}
-    traininglabelnumber = {}
-    validationlabelnumber = {}
-
-    for label, lencellid in dict(collections.Counter(labels)).items():  
-        traininglabelnumber[label] = int(lencellid*trainingratio)
-        validationlabelnumber[label] = int(lencellid*valratio) 
-    
-    nodeids = list(range(len(labels)))
-    random.shuffle(nodeids)
-    for nodeid in nodeids:
-        if labels[nodeid] not in traininglabel:
-            traininglabel[labels[nodeid]] = []           
-            
-        if len(traininglabel[labels[nodeid]]) < traininglabelnumber[labels[nodeid]]:
-            traininglabel[labels[nodeid]].append(nodeid)  
-            idx_train.append(nodeid)
-
-    random.shuffle(nodeids)
-    for nodeid in nodeids:
-        if labels[nodeid] not in validationlabel:
-            validationlabel[labels[nodeid]] = []   
-
-        if len(validationlabel[labels[nodeid]]) < validationlabelnumber[labels[nodeid]]:
-            if nodeid not in idx_train:
-                validationlabel[labels[nodeid]].append(nodeid)  
-                idx_val.append(nodeid)
-
-    for node in range(len(labels)):
-        if node not in idx_val and node not in idx_train:
-            idx_test.append(node)
-    return idx_train, idx_val, idx_test 
-    
-def generatesubgraph(G, cellidlabel, nodeidlist, singlecellexpression, allligands):
-    orgiganlnodeids = []
-    features = []
-    edges = []
-    labels = []
-    for node in tqdm(G.nodes()):
-        edgelistsource = []
-        edgelisttarget = []
-        featurelest = []
-        label = cellidlabel[nodeidlist[node]]
-
-        mainfeature = []
-        nodeexpressiondict = singlecellexpression[nodeidlist[node]].to_dict()
-        for gene in allligands:
-            if gene in nodeexpressiondict:
-                mainfeature.append(nodeexpressiondict[gene])
-
-        featurelest.append(mainfeature)
-        originalnodeid = []
-        originalnodeid.append(node)
-        if len(G[node]) > 0:
-            index = 1
-            for nodeid in list(G[node].keys()):
-                edgelistsource.append(0)
-                edgelisttarget.append(index)
-                index += 1
-                mainfeature = []
-                nodeexpressiondict = singlecellexpression[nodeidlist[nodeid]].to_dict()
-                for gene in allligands:
-                    if gene in nodeexpressiondict:
-                        mainfeature.append(nodeexpressiondict[gene])
-                originalnodeid.append(nodeid)
-                featurelest.append(mainfeature)
-
-            orgiganlnodeids.append(originalnodeid)    
-            edges.append([edgelistsource, edgelisttarget])
-            features.append(featurelest)
-            labels.append(label)
-
-    return orgiganlnodeids, edges, features, labels
-
-def print_error(value):
-    print(value)
-
-def communicationscore(suffixdatasetname, cellid):
-    celllinkweight, singlecellexpression, nozerocellexpression, singlecelllabels, labelsclass, lrs, celllocation, routesocre = loadallmaterialsmallmemory(suffixdatasetname, trainingratio=0.9)
-    subcellexpression, subsinglecellroute, celllabels, celldistance, celldistanceweight = getconnectedcells(cellid, celllinkweight, singlecelllabels, nozerocellexpression, routesocre, celllocation)
-    totaldict = {}
-    allcells = list(celllabels.keys())
-    if cellid in allcells:
-        allcells.remove(cellid)
-    for cell2 in allcells:       
-        totaldict[cell2] = findprotentialCombetweentwocells(subcellexpression, subsinglecellroute, celldistance, celldistanceweight, cellid, cell2, lrs)
-    with open(suffixdatasetname+'_GAT/'+cellid+".txt", 'w') as convert_file:
-        convert_file.write(json.dumps(totaldict))
-
-def loadlrroute(filepath, sep="\t", title=False, lcol=0, rcol=1, routecol=2):
-    lrs = []
-    
-    allgeneset = []
-    with open(filepath, "r") as LRS:
-        lines = LRS.readlines()
-        for line in lines:            
-            linedata = line.strip().split(sep)
-            if title:
-                title = False
-            else:
-                l = linedata[lcol].strip().upper()
-                r = linedata[rcol].strip().upper()
-                route = linedata[routecol].strip().upper()
-                allgeneset.append(l)
-                allgeneset.append(r)
-                lrs.append((l, r, route))
-                
-    return lrs, list(set(allgeneset))
-
-def replace_negatives(x):
-    if x < 0:
-        return 0
-    else:
-        return x
-
-def loadallmaterialsmallmemory(suffixdatasetname, trainingratio=0.05, randomlabel=False):
-    pikcleoutputfile = suffixdatasetname+"_GAT_temp_small.pkl"
-
-    if os.path.exists(pikcleoutputfile):
-        with open(pikcleoutputfile, 'rb') as f:  
-            celllinkweight, singlecellexpression, nozerocellexpression, singlecelllabels, labelsclass, lrs, celllocation, routescoredf = pickle.load(f)
-
-    else:
-        routesocrefilepath = suffixdatasetname+"_routescore.csv"
-        singlecellexpressionfilepath = suffixdatasetname+"_expression_median.csv"
-        singlecelllabelfilepath = suffixdatasetname+"_label.csv"
-        locationfilepath = suffixdatasetname+"_location.csv"
-
-        print("Loading expression")
-        singlecellexpression = pd.read_csv(singlecellexpressionfilepath, index_col=0)
-
-        routescoredf = pd.read_csv(routesocrefilepath, index_col=0)
-
-        singlecelllabels, labelsclass = getcelllabel(singlecelllabelfilepath, sep=",")
-        lrfilepath = "./knowledge/lrtouresall.csv"
-        lrs, allgenes = loadlrroute(lrfilepath, sep=",", title=True, lcol=0, rcol=1)
-        lrs = [lr for lr in lrs if lr[0] in list(singlecellexpression.index) and lr[1] in list(singlecellexpression.index) and int(lr[2]) in list(routescoredf.index)]
-        singlecellexpression = singlecellexpression[singlecellexpression.index.isin(allgenes)]
-        nozerocellexpression = singlecellexpression.applymap(replace_negatives)
-        celllocation = pd.read_csv(locationfilepath, index_col=0)
-        linkedgefile = suffixdatasetname+"_GAT_cellcommunication.csv"
-        print("Loading loadedgelinkfile")
-        celllinkweight = loadedgelinkfile(linkedgefile)
-        with open(pikcleoutputfile, 'wb') as f:  
-            pickle.dump([celllinkweight, singlecellexpression, nozerocellexpression, singlecelllabels, labelsclass, lrs, celllocation, routescoredf], f)
-
-    if randomlabel:
-        celllinkweight = None
-        singlecellexpression = None
-        nozerocellexpression = None
-        lrs = None
-        celllocation = None
-        routescoredf = None
-        newsinglecelllabels, newlabelsclass = {}, {}
-        selectedableclass = list(labelsclass.keys())
-        for key in singlecelllabels.keys():
-            randomselected = random.choice(selectedableclass)
-            newsinglecelllabels[key] = int(randomselected)
-            if randomselected not in newlabelsclass:
-                newlabelsclass[randomselected] = []
-            newlabelsclass[randomselected].append(key)
-
-        singlecelllabels, labelsclass = newsinglecelllabels, newlabelsclass
-        
-    return celllinkweight, singlecellexpression, nozerocellexpression, singlecelllabels, labelsclass, lrs, celllocation, routescoredf
-
-def loadedgelinkfile(linkedgefile):
-    returnresults = {}
-    title = True
-    with open(linkedgefile, "r") as linkedge:
-        for line in linkedge.readlines():
-            if title:
-                title = False
-            else:
-                sourceid, targetid, weight = line.strip().split(',')
-                if sourceid not in returnresults:
-                    returnresults[sourceid] = {}
-                returnresults[sourceid][targetid] = float(weight)
-    return returnresults
-
-def randomlabels(suffixdatasetname, q):
-    scorelist = {}
-    celllinkweight, singlecellexpression, nozerocellexpression, singlecelllabels, labelsclass, lrs, celllocation, routesocre = loadallmaterialsmallmemory(suffixdatasetname, 0.9, True)
-    outputfile = suffixdatasetname+"_GAT_communication.pkl"
-    with open(outputfile, 'rb') as f:  
-            Allcommunication = pickle.load(f)
-    cellgrouplevelcommunication = {}
-    allclass = list(labelsclass.keys())    
-    for i in allclass:
-        for j in allclass: 
-            cellgrouplevelcommunication[i+"_"+j] = celltypelrcommunication(i, j, Allcommunication, labelsclass)
-            for lrkey, values in cellgrouplevelcommunication[i+"_"+j].items():
-                if lrkey not in scorelist:
-                    scorelist[lrkey] = []
-                scorelist[lrkey].append(max(statistics.mean(values), 0))
-    with open(suffixdatasetname+"_GAT_random_temp/"+str(q)+".pkl", 'wb') as f:  
-            pickle.dump(scorelist, f)

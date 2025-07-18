@@ -1,9 +1,7 @@
-meanvaluepimport torch
+import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch_geometric.nn import MessagePassing, global_mean_pool
-import torch_geometric.utils as pyg_utils
-import pandas as pd
+
 
 class CustomGATConv(nn.Module):
     def __init__(self, p1_channels, p2_channels, mask_indexes,device):
