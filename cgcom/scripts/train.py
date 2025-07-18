@@ -25,6 +25,7 @@ from collections import Counter
 def train_model(
     hyperparameters,
     dataset_path,
+    output_model_path=None,
     lr_filepath="./Knowledge/CellPhoneDB_split.csv",
     tf_filepath="./Knowledge/TFlist.txt",
     output_dir="./Script/FeaturelevelGAT/tmp/",
@@ -34,13 +35,9 @@ def train_model(
     """
     Train the CGCom model.
     Args:
+        hyperparameters (dict): Dictionary containing training hyperparameters.
         dataset_path (str): Path to the dataset.
-        lr (float): Learning rate for the optimizer.
-        num_epochs (int): Number of epochs to train the model.
-        batch_size (int): Batch size for training and validation.
-        train_ratio (float): Ratio of training data.
-        val_ratio (float): Ratio of validation data.
-        neighbor_threshold_ratio (float): Threshold ratio for building the graph.
+        output_model_path (str): Path to save the trained model. If None, uses default naming.
         lr_filepath (str): Path to ligand-receptor database.
         tf_filepath (str): Path to transcription factors list.
         output_dir (str): Directory to save outputs.
@@ -210,45 +207,6 @@ def train_model(
     optimizer = Adam(model.parameters(), lr=hyperparameters['lr'])
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=10)
     
-    # Training function
-    def train():
-        model.train()
-        total_loss = 0
-        for data in train_loader:
-            data = data.to(device)
-            optimizer.zero_grad()
-            out, _1, _2, _3 = model(data.x, data.edge_index, data.batch)
-            loss = F.cross_entropy(out, data.y)
-            loss.backward()
-            optimizer.step()
-            total_loss += loss.item()
-        return total_loss / len(train_loader)
-    
-    # Testing function
-    def test(loader):
-        model.eval()
-        total_loss = 0
-        all_preds = []
-        all_labels = []
-        all_probs = []
-        
-        with torch.no_grad():
-            for data in loader:
-                data = data.to(device)
-                out, _1, _2, _3 = model(data.x, data.edge_index, data.batch)
-                probs = F.softmax(out, dim=1)
-                loss = F.cross_entropy(out, data.y)
-                total_loss += loss.item()
-                preds = out.argmax(dim=1)
-                all_preds.extend(preds.cpu().numpy())
-                all_labels.extend(data.y.cpu().numpy())
-                all_probs.extend(probs.cpu().numpy())
-        
-        precision, recall, f1, _ = precision_recall_fscore_support(all_labels, all_preds, average='weighted', zero_division=0)
-        conf_matrix = confusion_matrix(all_labels, all_preds)
-        accuracy = sum(p == l for p, l in zip(all_preds, all_labels)) / len(all_labels)
-        return total_loss / len(loader.dataset), accuracy, precision, recall, f1, conf_matrix
-    
     # Communication recorder function
     def communicationrecorder(outputpath):
         model.eval()
@@ -275,10 +233,78 @@ def train_model(
     
     # Training loop
     for epoch in range(hyperparameters['num_epochs']):
-        train_loss = train()
-        train_loss, train_acc, train_precision, train_recall, train_f1, train_conf_matrix = test(train_loader)
-        validate_loss, validate_acc, val_precision, val_recall, val_f1, val_conf_matrix = test(validate_loader)
-        test_loss, test_acc, test_precision, test_recall, test_f1, test_conf_matrix = test(test_loader)
+        # Training phase
+        model.train()
+        train_total_loss = 0
+        for data in train_loader:
+            data = data.to(device)
+            optimizer.zero_grad()
+            out, _1, _2, _3 = model(data.x, data.edge_index, data.batch)
+            loss = F.cross_entropy(out, data.y)
+            loss.backward()
+            optimizer.step()
+            train_total_loss += loss.item()
+        train_loss = train_total_loss / len(train_loader)
+        
+        # Evaluation phase for all datasets
+        model.eval()
+        with torch.no_grad():
+            # Train set evaluation
+            train_total_loss = 0
+            train_preds = []
+            train_labels = []
+            for data in train_loader:
+                data = data.to(device)
+                out, _1, _2, _3 = model(data.x, data.edge_index, data.batch)
+                loss = F.cross_entropy(out, data.y)
+                train_total_loss += loss.item()
+                preds = out.argmax(dim=1)
+                train_preds.extend(preds.cpu().numpy())
+                train_labels.extend(data.y.cpu().numpy())
+            
+            train_loss = train_total_loss / len(train_loader.dataset)
+            train_acc = sum(p == l for p, l in zip(train_preds, train_labels)) / len(train_labels)
+            train_precision, train_recall, train_f1, _ = precision_recall_fscore_support(
+                train_labels, train_preds, average='weighted', zero_division=0
+            )
+            
+            # Validation set evaluation
+            val_total_loss = 0
+            val_preds = []
+            val_labels = []
+            for data in validate_loader:
+                data = data.to(device)
+                out, _1, _2, _3 = model(data.x, data.edge_index, data.batch)
+                loss = F.cross_entropy(out, data.y)
+                val_total_loss += loss.item()
+                preds = out.argmax(dim=1)
+                val_preds.extend(preds.cpu().numpy())
+                val_labels.extend(data.y.cpu().numpy())
+            
+            validate_loss = val_total_loss / len(validate_loader.dataset)
+            validate_acc = sum(p == l for p, l in zip(val_preds, val_labels)) / len(val_labels)
+            val_precision, val_recall, val_f1, _ = precision_recall_fscore_support(
+                val_labels, val_preds, average='weighted', zero_division=0
+            )
+            
+            # Test set evaluation
+            test_total_loss = 0
+            test_preds = []
+            test_labels = []
+            for data in test_loader:
+                data = data.to(device)
+                out, _1, _2, _3 = model(data.x, data.edge_index, data.batch)
+                loss = F.cross_entropy(out, data.y)
+                test_total_loss += loss.item()
+                preds = out.argmax(dim=1)
+                test_preds.extend(preds.cpu().numpy())
+                test_labels.extend(data.y.cpu().numpy())
+            
+            test_loss = test_total_loss / len(test_loader.dataset)
+            test_acc = sum(p == l for p, l in zip(test_preds, test_labels)) / len(test_labels)
+            test_precision, test_recall, test_f1, _ = precision_recall_fscore_support(
+                test_labels, test_preds, average='weighted', zero_division=0
+            )
         
         scheduler.step(validate_loss)
         current_lr = optimizer.param_groups[0]['lr']
@@ -286,10 +312,17 @@ def train_model(
         print(f'Epoch: {epoch+1}, Train Loss: {train_loss:.4f}, Validate Loss: {validate_loss:.4f}, Train Acc: {train_acc:.4f}, Validate Acc: {validate_acc:.4f}, Test Acc: {test_acc:.4f}, LR: {current_lr:.6f}')
     
     # Save model and results
-    outputpath = f"{output_dir}/{dataset_name}_{hyperparameters['neighbor_threshold_ratio']}/"
-    os.makedirs(outputpath, exist_ok=True)
+    if output_model_path is None:
+        outputpath = f"{output_dir}/{dataset_name}_{hyperparameters['neighbor_threshold_ratio']}/"
+        os.makedirs(outputpath, exist_ok=True)
+        model_path = outputpath + f'trained_model_{dataset_name}_{hyperparameters["neighbor_threshold_ratio"]}.pt'
+    else:
+        # Create directory if it doesn't exist
+        os.makedirs(os.path.dirname(output_model_path), exist_ok=True)
+        model_path = output_model_path
+        outputpath = os.path.dirname(output_model_path) + "/"
     
-    torch.save(model, outputpath + f'trained_model_{dataset_name}_{hyperparameters['neighbor_threshold_ratio']}.pt')
+    torch.save(model, model_path)
     
     # Record communication patterns
     communicationrecorder(outputpath)
@@ -299,7 +332,10 @@ def train_model(
     with open(pikcleoutputfile, 'wb') as f:
         pickle.dump([ligands, receptors, selectedTFs, subLRdict], f)
     
-    print(f"Training completed. Model and results saved to {outputpath}")
+    print(f"Training completed. Model saved to {model_path}")
+    print(f"Additional outputs saved to {outputpath}")
+    
+    return model, model_path
 
 
 
