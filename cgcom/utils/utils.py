@@ -12,6 +12,59 @@ import math
 import json
 import statistics
 import torch
+import scanpy as sc
+
+def get_hyperparameters(lr=0.01, num_epochs=100, batch_size=128, train_ratio=0.05, val_ratio=0.1, neighbor_threshold_ratio=0.01):
+    """
+    Initialize the hyperparameters for the CGCom model.
+    Args:
+        lr (float): Learning rate for the optimizer.
+        num_epochs (int): Number of epochs to train the model.
+        batch_size (int): Batch size for training and validation.
+        train_ratio (float): Ratio of training data.
+        val_ratio (float): Ratio of validation data.
+        neighbor_threshold_ratio (float): Threshold ratio for building the graph.
+    """
+    hyperparameters = {
+        "learning_rate": lr,
+        "num_epochs": num_epochs,
+        "batch_size": batch_size,
+        "train_ratio": train_ratio,
+        "val_ratio": val_ratio,
+        "neighbor_threshold_ratio": neighbor_threshold_ratio
+    }
+    return hyperparameters
+
+def convert_anndata_to_df(anndata_filepath):
+    """
+    Convert anndata to dataframe.
+    Args:
+        anndata_filepath (str): Path to the anndata file.
+    Returns:
+        gene_expression_df (pd.DataFrame): DataFrame containing the gene expression data.
+    """
+    adata = sc.read_h5ad(anndata_filepath)
+    gene_expression = adata.X.toarray()
+    gene_expression_df = pd.DataFrame(gene_expression, index=adata.obs_names, columns=adata.var_names)
+    return gene_expression_df
+
+def build_graph():
+    pass
+
+def get_cell_label_dict(gene_expression_df):
+    """
+    Get the cell label dictionary.
+    Args:
+        cell_label_filepath (str): Path to the cell label file.
+    Returns:
+        cell_label_dict (dict): Dictionary containing the cell label data.
+    """
+
+def get_cell_locations(anndata_filepath):
+    adata = sc.read_h5ad(anndata_filepath)
+    
+
+# Shit below:
 
 def meanvaluep(suffixdatasetname, values, lrkey, i, j, scorelistlr):
     output = suffixdatasetname+"_GAT_random_pval/"+str(i)+"_"+str(j)+"_"+lrkey+"_pval.pkl"
@@ -99,7 +152,7 @@ def getcelllabel(filepath, sep=","):
             cellidlabel[linedata[0]] = int(linedata[1])
     return cellidlabel
 
-def loadlr(filepath="./Knowledge/allr.csv", sep=",", title=True, lcol=0, rcol=1):
+def loadlr(filepath="./knowledge/allr.csv", sep=",", title=True, lcol=0, rcol=1):
     lrs = []
     receptordict = {}
     allgeneset = []
@@ -264,7 +317,7 @@ def loadallmaterialsmallmemory(suffixdatasetname, trainingratio=0.05, randomlabe
         routescoredf = pd.read_csv(routesocrefilepath, index_col=0)
 
         singlecelllabels, labelsclass = getcelllabel(singlecelllabelfilepath, sep=",")
-        lrfilepath = "./Knowledge/lrtouresall.csv"
+        lrfilepath = "./knowledge/lrtouresall.csv"
         lrs, allgenes = loadlrroute(lrfilepath, sep=",", title=True, lcol=0, rcol=1)
         lrs = [lr for lr in lrs if lr[0] in list(singlecellexpression.index) and lr[1] in list(singlecellexpression.index) and int(lr[2]) in list(routescoredf.index)]
         singlecellexpression = singlecellexpression[singlecellexpression.index.isin(allgenes)]
@@ -326,4 +379,4 @@ def randomlabels(suffixdatasetname, q):
                     scorelist[lrkey] = []
                 scorelist[lrkey].append(max(statistics.mean(values), 0))
     with open(suffixdatasetname+"_GAT_random_temp/"+str(q)+".pkl", 'wb') as f:  
-            pickle.dump(scorelist, f) 
+            pickle.dump(scorelist, f)
