@@ -1,3 +1,3 @@
-"""
-Scripts for training GAT model and analyzing cell communication
-""" 
+from .train import train_model
+
+__all__ = ['train_model']
