@@ -1,9 +1,6 @@
 import os
 import torch
 import pickle
-import random
-import math
-import networkx as nx
 from cgcom.utils import *
 from torch_geometric.data import DataLoader
 from torch.optim import Adam
@@ -12,9 +9,9 @@ import scanpy as sc
 import pandas as pd
 from tqdm import tqdm
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import precision_recall_fscore_support, confusion_matrix
+from sklearn.metrics import precision_recall_fscore_support
 from sklearn.preprocessing import MinMaxScaler
-from models.model import GATGraphClassifier
+from cgcom.models import GATGraphClassifier
 from collections import Counter
 
 def train_model(
