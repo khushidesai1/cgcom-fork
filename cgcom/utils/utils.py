@@ -35,7 +35,7 @@ def get_hyperparameters(lr=0.01, num_epochs=100, batch_size=128, train_ratio=0.0
     }
     return hyperparameters
 
-def convert_anndata_to_df(anndata_filepath):
+def convert_anndata_to_df(adata):
     """
     Convert anndata to dataframe.
     Args:
@@ -43,7 +43,6 @@ def convert_anndata_to_df(anndata_filepath):
     Returns:
         gene_expression_df (pd.DataFrame): DataFrame containing the gene expression data.
     """
-    adata = sc.read_h5ad(anndata_filepath)
     gene_expression = adata.X.toarray()
     gene_expression_df = pd.DataFrame(gene_expression, index=adata.obs_names, columns=adata.var_names)
     return gene_expression_df
@@ -87,7 +86,7 @@ def build_graph(cell_locations_df, directed=True):
             disdict[i][j] = distance
     return G, disdict, locationlist, nodeidlist, minlocation, maxlocation
 
-def get_cell_label_dict(anndata_filepath, labels_key):
+def get_cell_label_dict(adata, labels_key):
     """
     Get the cell label dictionary.
     Args:
@@ -95,13 +94,12 @@ def get_cell_label_dict(anndata_filepath, labels_key):
     Returns:
         cell_label_dict (dict): Dictionary containing the cell label data.
     """
-    adata = sc.read_h5ad(anndata_filepath)
     cell_label_dict = {}
     for cell_id, cell_label in zip(adata.obs_names, adata.obs[labels_key]):
         cell_label_dict[cell_id] = cell_label
     return cell_label_dict
 
-def get_cell_locations_df(anndata_filepath):
+def get_cell_locations_df(adata):
     """
     Get the cell locations.
     Args:
@@ -109,38 +107,31 @@ def get_cell_locations_df(anndata_filepath):
     Returns:
         cell_locations (np.ndarray): Array containing the cell locations.
     """
-    adata = sc.read_h5ad(anndata_filepath)
     cell_locations = adata.obsm["spatial"].values
     cell_locations_df = pd.DataFrame(cell_locations, index=adata.obs_names, columns=["x", "y"])
     return cell_locations_df
 
-# Shit below:
+def load_dataset(anndata_filepath, labels_key, dataset_name,directed=True):
+    adata = sc.read_h5ad(anndata_filepath)
+    cell_locations_df = get_cell_locations_df(adata)
+    gene_expression_df = convert_anndata_to_df(adata)
+    cell_label_dict = get_cell_label_dict(adata, labels_key)
+    G, disdict, locationlist, nodeidlist, minlocation, maxlocation = build_graph(cell_locations_df, directed=directed)
+    pickle_output_path = f"{dataset_name}_raw_sub_graph.pkl"
+    if os.path.exists(pickle_output_path):
+        with open(pickle_output_path, 'rb') as f:
+            G, disdict, locationlist, nodeidlist, minlocation, maxlocation = pickle.load(f)
+    else:
+        G, disdict, locationlist, nodeidlist, minlocation, maxlocation = build_graph(cell_locations_df, directed=directed)
+        with open(pickle_output_path, 'wb') as f:
+            pickle.dump([G, disdict, locationlist, nodeidlist, minlocation, maxlocation], f)
+    return locationlist, disdict, minlocation, maxlocation, G, gene_expression_df.values, cell_label_dict.values, nodeidlist
 
 def meanvaluep(suffixdatasetname, values, lrkey, i, j, scorelistlr):
     output = suffixdatasetname+"_GAT_random_pval/"+str(i)+"_"+str(j)+"_"+lrkey+"_pval.pkl"
     meanvalue = max(statistics.mean(values), 0)
     with open(output, 'wb') as f:  
         pickle.dump(1- (sum(i > meanvalue for i in scorelistlr) / len(scorelistlr)), f)
-
-def loaddataset(suffixdatasetname, datasetprefixname, directed):
-    singlecelllabelfilepath = suffixdatasetname+datasetprefixname+"_label.csv"
-    cellidlabel = getcelllabel(singlecelllabelfilepath, sep=",")
-    singlecellexpressionfilepath = suffixdatasetname+datasetprefixname+"_expression_median_small.csv"
-    locationfilepath = suffixdatasetname+datasetprefixname+"_location.csv"
-    singlecellexpression = pd.read_csv(singlecellexpressionfilepath, index_col=0)
-    
-    pikcleoutputfile = suffixdatasetname+datasetprefixname+"_raw_sub_graph.pkl"
-    if os.path.exists(pikcleoutputfile):
-        with open(pikcleoutputfile, 'rb') as f:  
-            G, disdict, locationlist, nodeidlist, minlocation, maxlocation = pickle.load(f)
-    else:
-        G, disdict, locationlist, nodeidlist, minlocation, maxlocation = buildgraph(locationfilepath, sep=",", title=True, directed=directed)
-        with open(pikcleoutputfile, 'wb') as f:  
-            pickle.dump([G, disdict, locationlist, nodeidlist, minlocation, maxlocation], f)  
-    return locationlist, disdict, minlocation, maxlocation, G, singlecellexpression, cellidlabel, nodeidlist
-
-def eudlidistance(node1, node2):
-    return math.dist(node1, node2)
 
 def readdedgestoGraph(G, locationlist, disdict, neighborthresholdratio, minlocation, maxlocation, directed):
     neighborthreshold = minlocation+(maxlocation-minlocation)*neighborthresholdratio
