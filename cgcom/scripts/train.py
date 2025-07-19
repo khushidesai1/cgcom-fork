@@ -6,9 +6,13 @@ from cgcom.utils import (
     get_cell_label_dict,
     load_csv_and_create_dict,
     buildgraph,
-    readdedgestoGraph,
+    read_edges_to_graph,
     generate_subgraphs,
     generate_graph,
+    generate_mask_index,
+    generate_sub_dictionary,
+    pick_random_common_elements,
+    load_transcription_factors,
 )
 from torch_geometric.data import DataLoader
 from torch.optim import Adam
@@ -21,6 +25,29 @@ from sklearn.metrics import precision_recall_fscore_support
 from sklearn.preprocessing import MinMaxScaler
 from cgcom.models import GATGraphClassifier
 from collections import Counter
+
+def communicationrecorder(model, total_loader, node_id_list, filtered_original_node_ids, output_path, device):
+    model.eval()
+    with torch.no_grad():
+        for data, node_lists in tqdm(zip(total_loader, filtered_original_node_ids), total=len(filtered_original_node_ids)):
+            data = data.to(device)
+            out, communication, attention_coefficients, V = model(data.x, data.edge_index, data.batch)
+            first_v = V[0]
+            all_node_ids = [node_id_list[i] for i in node_lists]
+            
+            result = communication * first_v.unsqueeze(0).unsqueeze(-1)
+            result = result - result.max()
+            first_attention = F.softmax(result, dim=0).cpu()
+            
+            torch.save(first_attention, output_path + 'firstattention-' + str(list(node_lists)[0]) + '.pt')
+            
+            pickle_output_file = output_path + 'nodelist-' + str(list(node_lists)[0]) + '.pkl'
+            with open(pickle_output_file, 'wb') as f:
+                pickle.dump(list(node_lists), f)
+            
+            pickle_output_file = output_path + 'allnodeid-' + str(list(node_lists)[0]) + '.pkl'
+            with open(pickle_output_file, 'wb') as f:
+                pickle.dump(list(all_node_ids), f)
 
 def train_model(
     hyperparameters,
@@ -53,25 +80,25 @@ def train_model(
     cell_label_dict = get_cell_label_dict(adata, labels_key)
     
     # Load ligand-receptor mapping
-    lrmapping = load_csv_and_create_dict(lr_filepath)
-    subLRdict = generate_sub_dictionary(lrmapping, list(expression_df.columns))
+    lr_mapping = load_csv_and_create_dict(lr_filepath)
+    sub_lr_dict = generate_sub_dictionary(lr_mapping, list(expression_df.columns))
     
     # Load transcription factors
-    TFs = loadtf(tf_filepath)
-    selectedTFs = pick_random_common_elements(list(expression_df.columns), TFs)
+    tfs = load_transcription_factors(tf_filepath)
+    selected_tfs = pick_random_common_elements(list(expression_df.columns), tfs)
     
     # Extract ligands and receptors
     ligands = []
     receptors = []
     
-    for key, value in subLRdict.items():
+    for key, value in sub_lr_dict.items():
         receptors.append(key)
         ligands += value
     ligands = list(set(ligands))
-    mask_indexes = generateMaskindex(ligands, subLRdict)
+    mask_indexes = generate_mask_index(ligands, sub_lr_dict)
     
     # Form sub-dataframe and normalize
-    subdf = formsubdataframe(expression_df, ligands + receptors + selectedTFs)
+    subdf = expression_df[ligands + receptors + selected_tfs]
     scaler = MinMaxScaler()
     subdf = pd.DataFrame(scaler.fit_transform(subdf), index=subdf.index, columns=subdf.columns)
     
@@ -85,7 +112,7 @@ def train_model(
         os.makedirs(os.path.dirname(temp_location_path), exist_ok=True)
         location_df.to_csv(temp_location_path)
         
-        G, disdict, locationlist, nodeidlist, minlocation, maxlocation = buildgraph(
+        G, distance_dict, location_list, node_id_list, min_location, max_location = buildgraph(
             temp_location_path, sep=",", title=True
         )
         
@@ -94,48 +121,48 @@ def train_model(
     else:
         raise ValueError("Dataset must contain spatial coordinates in adata.obsm['spatial']")
     
-    G, edgelist = readdedgestoGraph(G, locationlist, disdict, hyperparameters['neighbor_threshold_ratio'], minlocation, maxlocation)
+    G, edge_list = read_edges_to_graph(G, location_list, distance_dict, hyperparameters['neighbor_threshold_ratio'], min_location, max_location)
     
     # Generate subgraphs and features
-    orgiganlnodeids = []
+    original_node_ids = []
     features = []
     edges = []
     labels = []
     
     subgraphs = generate_subgraphs(G)
-    for subgraphnode, subg in tqdm(subgraphs.items(), total=len(subgraphs), desc="Creating subgraph"):
-        edgelistsource = []
-        edgelisttarget = []
-        featurelest = []
+    for subgraph_node, subgraph in tqdm(subgraphs.items(), total=len(subgraphs), desc="Creating subgraph"):
+        edge_list_source = []
+        edge_list_target = []
+        feature_list = []
         
-        label = cell_label_dict[nodeidlist[subgraphnode]]
-        mainfeature = subdf.loc[nodeidlist[subgraphnode]].tolist()
-        featurelest.append(mainfeature)
+        label = cell_label_dict[node_id_list[subgraph_node]]
+        main_feature = subdf.loc[node_id_list[subgraph_node]].tolist()
+        feature_list.append(main_feature)
         
         index = 0
-        nodelist = [subgraphnode]
+        node_list = [subgraph_node]
         
-        for node in subg.nodes():
-            if node != subgraphnode:
-                nodelist.append(node)
-                mainfeature = subdf.loc[nodeidlist[node]].tolist()
-                featurelest.append(mainfeature)
+        for node in subgraph.nodes():
+            if node != subgraph_node:
+                node_list.append(node)
+                main_feature = subdf.loc[node_id_list[node]].tolist()
+                feature_list.append(main_feature)
                 if index > 0:
-                    edgelistsource.append(0)
-                    edgelisttarget.append(index)
+                    edge_list_source.append(0)
+                    edge_list_target.append(index)
                 index += 1
         
-        orgiganlnodeids.append(nodelist)
-        features.append(featurelest)
+        original_node_ids.append(node_list)
+        features.append(feature_list)
         labels.append(label)
-        edges.append([edgelistsource, edgelisttarget])
+        edges.append([edge_list_source, edge_list_target])
     
     # Log dataset statistics
     print(f"Number of graphs: {len(features)}") 
     print(f"Number of genes: {len(features[0][0])}")
     print(f"Number of ligands: {len(ligands)}")
-    print(f"Number of receptors: {len(subLRdict)}")
-    print(f"Number of TFs: {len(selectedTFs)}")
+    print(f"Number of receptors: {len(sub_lr_dict)}")
+    print(f"Number of TFs: {len(selected_tfs)}")
     print(f"Neighbor threshold ratio: {hyperparameters['neighbor_threshold_ratio']}")
     print(f"Train ratio: {hyperparameters['train_ratio']}")
     print(f"Validation ratio: {hyperparameters['val_ratio']}")
@@ -148,7 +175,7 @@ def train_model(
     filtered_features = [features[i] for i in filtered_indices]
     filtered_edges = [edges[i] for i in filtered_indices]
     filtered_labels = [labels[i] for i in filtered_indices]
-    filtered_orgiganlnodeids = [orgiganlnodeids[i] for i in filtered_indices]
+    filtered_original_node_ids = [original_node_ids[i] for i in filtered_indices]
     
     dataset, num_classes = generate_graph(filtered_edges, filtered_features, filtered_labels)
     
@@ -180,57 +207,32 @@ def train_model(
     train_loader = DataLoader(train_dataset, batch_size=hyperparameters['batch_size'], shuffle=True)
     validate_loader = DataLoader(valid_dataset, batch_size=hyperparameters['batch_size'], shuffle=True)
     test_loader = DataLoader(test_dataset, batch_size=hyperparameters['batch_size'], shuffle=False)
-    totalloader = DataLoader(dataset, batch_size=1, shuffle=False)
+    total_loader = DataLoader(dataset, batch_size=1, shuffle=False)
     
     # Initialize the model
-    FChidden_channels_2 = 1083
-    FChidden_channels_3 = 512
-    FChidden_channels_4 = 64
+    fc_hidden_channels_2 = 1083
+    fc_hidden_channels_3 = 512
+    fc_hidden_channels_4 = 64
     
     ligand_channel = len(ligands)
-    receptor_channel = len(subLRdict)
-    TF_channel = len(selectedTFs)
+    receptor_channel = len(sub_lr_dict)
+    tf_channel = len(selected_tfs)
     
     model = GATGraphClassifier(
-        FChidden_channels_2=FChidden_channels_2,
-        FChidden_channels_3=FChidden_channels_3,
-        FChidden_channels_4=FChidden_channels_4,
+        FChidden_channels_2=fc_hidden_channels_2,
+        FChidden_channels_3=fc_hidden_channels_3,
+        FChidden_channels_4=fc_hidden_channels_4,
         num_classes=num_classes,
         device=device,
         ligand_channel=ligand_channel,
         receptor_channel=receptor_channel,
-        TF_channel=TF_channel,
+        TF_channel=tf_channel,
         mask_indexes=mask_indexes
     ).to(device)
-    
-    print(model)
+
     optimizer = Adam(model.parameters(), lr=hyperparameters['lr'])
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=10)
-    
-    # Communication recorder function
-    def communicationrecorder(outputpath):
-        model.eval()
-        with torch.no_grad():
-            for data, nodelists in tqdm(zip(totalloader, filtered_orgiganlnodeids), total=len(filtered_orgiganlnodeids)):
-                data = data.to(device)
-                out, communication, attention_coefficients, V = model(data.x, data.edge_index, data.batch)
-                firstV = V[0]
-                allnodeid = [nodeidlist[i] for i in nodelists]
-                
-                result = communication * firstV.unsqueeze(0).unsqueeze(-1)
-                result = result - result.max()
-                firstattention = F.softmax(result, dim=0).cpu()
-                
-                torch.save(firstattention, outputpath + 'firstattention-' + str(list(nodelists)[0]) + '.pt')
-                
-                pikcleoutputfile = outputpath + 'nodelist-' + str(list(nodelists)[0]) + '.pkl'
-                with open(pikcleoutputfile, 'wb') as f:
-                    pickle.dump(list(nodelists), f)
-                
-                pikcleoutputfile = outputpath + 'allnodeid-' + str(list(nodelists)[0]) + '.pkl'
-                with open(pikcleoutputfile, 'wb') as f:
-                    pickle.dump(list(allnodeid), f)
-    
+
     # Training loop
     for epoch in range(hyperparameters['num_epochs']):
         # Training phase
@@ -313,32 +315,26 @@ def train_model(
     
     # Save model and results
     if output_model_path is None:
-        outputpath = f"{output_dir}/{dataset_name}_{hyperparameters['neighbor_threshold_ratio']}/"
-        os.makedirs(outputpath, exist_ok=True)
-        model_path = outputpath + f'trained_model_{dataset_name}_{hyperparameters["neighbor_threshold_ratio"]}.pt'
+        output_path = f"{output_dir}/{dataset_name}_{hyperparameters['neighbor_threshold_ratio']}/"
+        os.makedirs(output_path, exist_ok=True)
+        model_path = output_path + f'trained_model_{dataset_name}_{hyperparameters["neighbor_threshold_ratio"]}.pt'
     else:
         # Create directory if it doesn't exist
         os.makedirs(os.path.dirname(output_model_path), exist_ok=True)
         model_path = output_model_path
-        outputpath = os.path.dirname(output_model_path) + "/"
+        output_path = os.path.dirname(output_model_path) + "/"
     
     torch.save(model, model_path)
     
     # Record communication patterns
-    communicationrecorder(outputpath)
+    communicationrecorder(model, total_loader, node_id_list, filtered_original_node_ids, output_path, device)
     
     # Save features information
-    pikcleoutputfile = outputpath + f"Feature_{dataset_name}.pkl"
-    with open(pikcleoutputfile, 'wb') as f:
-        pickle.dump([ligands, receptors, selectedTFs, subLRdict], f)
+    pickle_output_file = output_path + f"Feature_{dataset_name}.pkl"
+    with open(pickle_output_file, 'wb') as f:
+        pickle.dump([ligands, receptors, selected_tfs, sub_lr_dict], f)
     
     print(f"Training completed. Model saved to {model_path}")
-    print(f"Additional outputs saved to {outputpath}")
+    print(f"Additional outputs saved to {output_path}")
     
     return model, model_path
-
-
-
-
-
-

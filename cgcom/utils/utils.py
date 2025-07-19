@@ -5,39 +5,21 @@ import math
 import pickle
 import pandas as pd
 from tqdm import tqdm
-from torch.utils.data import Dataset
 import torch
-import numpy as np
 import random
-from torch_geometric.data import Data, DataLoader
-import scanpy as sc
-import statistics
-
+from torch_geometric.data import Data
 
 def load_large_pickle(file_path, chunk_size=1024):
-    # Get the size of the file in bytes
     file_size = os.path.getsize(file_path)
-
-    # Initialize the progress bar
     pbar = tqdm(total=file_size, unit='B', unit_scale=True, desc='Reading pickle file')
-
-    # Open the file in binary read mode
     with open(file_path, 'rb') as file:
-        # Initialize an empty bytes object to store chunks
         file_bytes = b''
-
-        # Read the file in chunks
         for chunk in iter(lambda: file.read(chunk_size), b''):
             file_bytes += chunk
             pbar.update(len(chunk))
-
-    # Close the progress bar
     pbar.close()
-
-    # Load the data from the read bytes
     data = pickle.loads(file_bytes)
     return data
-
 
 def generate_graph(edges, features, labels):
     dataset = []
@@ -47,16 +29,14 @@ def generate_graph(edges, features, labels):
         dataset.append(Data(x=torch.tensor(node_features), edge_index=torch.tensor(edge_index, dtype=torch.int64), y=torch.tensor(label), num_nodes=len(node_features)))
     return dataset, numberoflabels + 1
 
-
 def get_file_line_count(file_path):
     with open(file_path, 'r', encoding='utf-8') as f:
         for i, _ in enumerate(f, 1):
             pass
     return i
 
-
 def read_csv_with_progress(file_path, chunk_size=1000):
-    total_lines = get_file_line_count(file_path) - 1  # Subtract 1 for the header
+    total_lines = get_file_line_count(file_path) - 1  # Subtract 1 for the header line (first line)
     pbar = tqdm(total=total_lines, desc="Reading CSV")
 
     chunks = pd.read_csv(file_path, chunksize=chunk_size)
@@ -68,32 +48,20 @@ def read_csv_with_progress(file_path, chunk_size=1000):
     pbar.close()
     return pd.concat(df_list, ignore_index=False)
 
-
-def loadscfile(filepath):
-    df = read_csv_with_progress(filepath)
-    df.set_index(df.columns[0], inplace=True)
-    return df
-
-
-def loadtf(file_path):
+def load_transcription_factors(file_path):
     tfs = []
     with open(file_path, "r") as tffile:
         for line in tffile.readlines():
             tfs.append(line.strip().upper())
     return tfs
 
-
 def load_csv_and_create_dict(file_path):
-    # Load the CSV file
     df = pd.read_csv(file_path)
-    # Check if the dataframe has the required columns
     if 'Ligand' in df.columns and 'Receptor' in df.columns:
-        # Create a dictionary where receptor is the key and ligands are values
         receptor_ligand_dict = df.groupby('Receptor')['Ligand'].apply(list).to_dict()
         return receptor_ligand_dict
     else:
         return "Error: CSV file does not have the required 'ligand' and 'receptor' columns."
-
 
 def generate_sub_dictionary(receptor_ligand_dict, gene_list):
     # Create a sub-dictionary for the given list of genes
@@ -129,24 +97,11 @@ def pick_random_keys_with_elements(dictionary, genelist, n=25, max_elements=2):
 
 
 def pick_random_common_elements(list1, list2, n=10000):
-    # Find the common elements between the two lists
     common_elements = set(list1).intersection(list2)
-
-    # If there are enough common elements, randomly pick 'n' of them
     if len(common_elements) >= n:
         return random.sample(list(common_elements), n)
     else:
-        # If not enough common elements, return as many as possible
         return random.sample(list(common_elements), len(common_elements))
-
-
-def formsubdataframe(df, listofcolumn):
-    return df[listofcolumn]
-
-
-def eudlidistance(node1, node2):
-    return math.dist(node1, node2)
-
 
 def buildgraph(nodefilelocation, sep="\t", title=False):
     G = nx.Graph()
@@ -182,7 +137,7 @@ def buildgraph(nodefilelocation, sep="\t", title=False):
     return G, disdict, locationlist, nodeidlist, minlocation, maxlocation
 
 
-def readdedgestoGraph(G, locationlist, disdict, neighborthresholdratio, minlocation, maxlocation):
+def read_edges_to_graph(G, locationlist, disdict, neighborthresholdratio, minlocation, maxlocation):
     neighborthreshold = minlocation + (maxlocation - minlocation) * neighborthresholdratio
     G.remove_edges_from(list(G.edges()))
     edgelist = []
@@ -194,7 +149,6 @@ def readdedgestoGraph(G, locationlist, disdict, neighborthresholdratio, minlocat
                 G.add_edge(i, j)
 
     return G, edgelist
-
 
 def generate_subgraphs(G):
     subgraphs = {}
@@ -210,29 +164,10 @@ def generate_subgraphs(G):
 
     return subgraphs
 
-
-def loadlocation(filepath):
-    return pd.read_csv(filepath, index_col=0)
-
-
-def loadcelltype(filepath):
-    return pd.read_csv(filepath, index_col=0, header=None)
-
-
-def get_adjacency_matrix(G):
-    # Get the adjacency matrix in sparse format
-    adj_matrix_sparse = nx.adjacency_matrix(G)
-
-    # Convert to a dense format (numpy array)
-    adj_matrix_dense = adj_matrix_sparse.toarray()
-
-    return adj_matrix_dense
-
-
-def generateMaskindex(ligands, lrdictionary):
+def generate_mask_index(ligands, lrdictionary):
     rownumber = 0
     mask_index = []
-    for key, values in lrdictionary.items():
+    for _, values in lrdictionary.items():
         for value in values:
             columnnumber = ligands.index(value)
             mask_index.append([rownumber, columnnumber])
@@ -296,8 +231,6 @@ def readcolor():
 
     return colordict
 
-
-# Essential functions from original cgcom/utils/utils.py needed for train function
 def get_hyperparameters(lr=0.01, num_epochs=100, batch_size=128, train_ratio=0.05, val_ratio=0.1, neighbor_threshold_ratio=0.01):
     """
     Initialize the hyperparameters for the CGCom model.
