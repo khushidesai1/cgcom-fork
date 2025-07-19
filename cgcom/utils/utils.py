@@ -153,13 +153,10 @@ def read_edges_to_graph(G, locationlist, disdict, neighborthresholdratio, minloc
 def generate_subgraphs(G):
     subgraphs = {}
     for node in tqdm(G.nodes(), desc="Generate subgraphs"):
-        # Get the neighbors of the current node
         neighbors = list(nx.neighbors(G, node))
-        # Create a subgraph with the current node and its neighbors
         if len(neighbors) > 0:
             subgraph_nodes = [node] + neighbors
             subgraph = G.subgraph(subgraph_nodes)
-            # Store the subgraph
             subgraphs[node] = subgraph
 
     return subgraphs
@@ -174,18 +171,7 @@ def generate_mask_index(ligands, lrdictionary):
         rownumber += 1
     return mask_index
 
-
-def getcelllabel(filepath, sep=","):
-    cellidlabel = {}
-    with open(filepath, 'r') as file:
-        filelines = file.readlines()
-        for line in filelines:
-            linedata = line.strip().split(sep)
-            cellidlabel[linedata[0]] = int(linedata[1])
-    return cellidlabel
-
-
-def loadlrTF(filepath, sep="\t"):
+def load_lr_tf(filepath, sep="\t"):
     ls, rs, tfs = [], [], []
 
     with open(filepath, 'r') as file:
@@ -200,12 +186,6 @@ def loadlrTF(filepath, sep="\t"):
                          "R": rs,
                          "TF": tfs})
 
-
-def getTFsfromlr(lrTFdf, ligand, receptor):
-    filtered_df = lrTFdf[(lrTFdf['L'] == ligand) & (lrTFdf['R'] == receptor)]
-    return filtered_df['TF'].tolist()
-
-
 def load_data(filepath):
     """Load data from a text file."""
     with open(filepath, 'r') as file:
@@ -214,17 +194,17 @@ def load_data(filepath):
     return data_dict
 
 
-def readcolor():
-    numberofcolor = 50
-    suffixdatasetname = "./Knowledge/colordict.txt"
+def read_color():
+    number_of_color = 50
+    suffix_dataset_name = "./Knowledge/colordict.txt"
     colordict = []
-    if os.path.exists(suffixdatasetname):
-        with open(suffixdatasetname, "r") as colorfile:
+    if os.path.exists(suffix_dataset_name):
+        with open(suffix_dataset_name, "r") as colorfile:
             for line in colorfile.readlines():
                 colordict.append(line.strip())
     else:
-        with open(suffixdatasetname, "w") as colorfile:
-            for i in range(numberofcolor):
+        with open(suffix_dataset_name, "w") as colorfile:
+            for i in range(number_of_color):
                 color = "#" + ''.join([random.choice('0123456789ABCDEF') for j in range(6)])
                 colordict.append(color)
                 colorfile.write(color + "\n")
