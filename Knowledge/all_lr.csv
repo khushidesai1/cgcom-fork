@@ -1,4 +1,4 @@
-Ligand.ApprovedSymbol,Receptor.ApprovedSymbol
+Ligand,Receptor
 A2M,LRP1
 AANAT,MTNR1A
 AANAT,MTNR1B
@@ -2683,7 +2683,6 @@ Areg,EGFR
 Areg,EGFR
 Areg,EGFR
 Areg,EGFR
-Areg,EGFR
 Btc,EGFR
 Btc,EGFR
 Btc,EGFR
@@ -4149,6 +4148,7 @@ Tnfsf13,TNFRSF1A
 Tnfsf13,TNFRSF1A
 Tnfsf13,TNFRSF1A
 Tnfsf13,TNFRSF1A
+Tnfsf13,TNFRSF1A
 Tnfsf13,FAS
 Tnfsf13,FAS
 Gdf11,TGFBR1
@@ -4369,7 +4369,6 @@ Plg,ITGB3
 Plg,ITGB3
 C3,ITGB2
 C3,ITGB2
-Tgfb1,AR
 Tgfb1,AR
 Tgfb1,AR
 Tgfb1,AR
@@ -4443,8 +4442,6 @@ Tgfb1,ITGAV
 Tgfb1,ITGAV
 Tgfb1,ITGAV
 Tgfb1,ITGAV
-Ngf,NTRK1
-Ngf,NTRK1
 Ngf,NTRK1
 Ngf,NTRK1
 Ngf,NTRK1
@@ -5008,7 +5005,6 @@ Areg,ICAM1
 Areg,ICAM1
 Areg,ICAM1
 Areg,ICAM1
-Fcer2a,CR2
 Fcer2a,CR2
 Fcer2a,CR2
 Fcer2a,CR2

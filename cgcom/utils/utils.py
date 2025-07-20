@@ -103,39 +103,6 @@ def pick_random_common_elements(list1, list2, n=10000):
     else:
         return random.sample(list(common_elements), len(common_elements))
 
-def buildgraph(nodefilelocation, sep="\t", title=False):
-    G = nx.Graph()
-    i = 0
-    locationlist = []
-    nodeidlist = []
-    minlocation = 9999999999999
-    maxlocation = 0
-    with open(nodefilelocation, "r") as nodefile:
-        for line in tqdm(nodefile.readlines(), desc="Loading node to graph"):
-            linedata = line.strip().split(sep)
-            if title:
-                title = False
-            else:
-                x = float(linedata[1])
-                y = float(linedata[2])
-                G.add_node(i, pos=(x, y), label=linedata[0])
-                i += 1
-                alldistancelist = []
-                for location in locationlist:
-                    alldistancelist.append(eudlidistance(location, [x, y]))
-                maxlocation = max(alldistancelist + [maxlocation])
-                minlocation = min(alldistancelist + [minlocation])
-                locationlist.append([x, y])
-                nodeidlist.append(linedata[0])
-    disdict = {}
-    for i in tqdm(range(len(locationlist)), desc="Compute disdict"):
-        disdict[i] = {}
-        for j in range(i + 1, len(locationlist)):
-            distance = eudlidistance(locationlist[i], locationlist[j])
-            disdict[i][j] = distance
-
-    return G, disdict, locationlist, nodeidlist, minlocation, maxlocation
-
 
 def read_edges_to_graph(G, locationlist, disdict, neighborthresholdratio, minlocation, maxlocation):
     neighborthreshold = minlocation + (maxlocation - minlocation) * neighborthresholdratio

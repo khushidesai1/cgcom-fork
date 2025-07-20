@@ -53,8 +53,8 @@ def train_model(
     hyperparameters,
     dataset_path,
     output_model_path=None,
-    lr_filepath="./knowledge/CellPhoneDB_split.csv",
-    tf_filepath="./knowledge/TFlist.txt",
+    lr_filepath="./data/all_lr.csv",
+    tf_filepath="./data/TFlist.txt",
     output_dir="./saved_models",
     dataset_name="default",
     labels_key="cell_type"
