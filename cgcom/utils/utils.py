@@ -183,7 +183,7 @@ def get_hyperparameters(lr=0.01, num_epochs=100, batch_size=128, train_ratio=0.0
     Initialize the hyperparameters for the CGCom model.
     """
     hyperparameters = {
-        "learning_rate": lr,
+        "lr": lr,
         "num_epochs": num_epochs,
         "batch_size": batch_size,
         "train_ratio": train_ratio,
