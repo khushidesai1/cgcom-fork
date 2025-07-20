@@ -178,7 +178,7 @@ def read_color():
 
     return colordict
 
-def get_hyperparameters(lr=0.01, num_epochs=100, batch_size=128, train_ratio=0.05, val_ratio=0.1, neighbor_threshold_ratio=0.01):
+def get_hyperparameters(lr=0.01, num_epochs=100, batch_size=128, train_ratio=0.9, val_ratio=0.05, neighbor_threshold_ratio=0.01):
     """
     Initialize the hyperparameters for the CGCom model.
     """
