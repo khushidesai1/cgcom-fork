@@ -208,7 +208,7 @@ def get_cell_label_dict(adata, labels_key):
     """
     cell_label_dict = {}
     for cell_id, cell_label in zip(adata.obs_names, adata.obs[labels_key]):
-        cell_label_dict[cell_id] = cell_label
+        cell_label_dict[cell_id] = int(cell_label)
     return cell_label_dict
 
 
