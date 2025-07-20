@@ -11,6 +11,7 @@ from .utils import (
     generate_mask_index,
     load_transcription_factors,
     pick_random_common_elements,
+    build_graph,
 )
 
 __all__ = [
@@ -26,4 +27,5 @@ __all__ = [
     'generate_mask_index',
     'load_transcription_factors',
     'pick_random_common_elements',
+    'build_graph',
 ] 

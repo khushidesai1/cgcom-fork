@@ -4,6 +4,7 @@ import pickle
 from cgcom.utils import (
     convert_anndata_to_df,
     get_cell_label_dict,
+    build_graph,
     load_csv_and_create_dict,
     read_edges_to_graph,
     generate_subgraphs,
@@ -111,7 +112,7 @@ def train_model(
         os.makedirs(os.path.dirname(temp_location_path), exist_ok=True)
         location_df.to_csv(temp_location_path)
         
-        G, distance_dict, location_list, node_id_list, min_location, max_location = buildgraph(
+        G, distance_dict, location_list, node_id_list, min_location, max_location = build_graph(
             temp_location_path, sep=",", title=True
         )
         
