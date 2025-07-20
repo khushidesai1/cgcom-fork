@@ -113,7 +113,8 @@ def train_model(
         location_df.to_csv(temp_location_path)
         
         G, distance_dict, location_list, node_id_list, min_location, max_location = build_graph(
-            temp_location_path, sep=",", title=True
+            cell_locations_df=location_df,
+            directed=True
         )
         
         # Clean up temp file
