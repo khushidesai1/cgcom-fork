@@ -80,27 +80,27 @@ def train_model(
     cell_label_dict = get_cell_label_dict(adata, labels_key)
     
     # Load ligand-receptor mapping
-    lr_mapping = load_csv_and_create_dict(lr_filepath)
-    sub_lr_dict = generate_sub_dictionary(lr_mapping, list(expression_df.columns))
+    # lr_mapping = load_csv_and_create_dict(lr_filepath)
+    # sub_lr_dict = generate_sub_dictionary(lr_mapping, list(expression_df.columns))
     
-    # Load transcription factors
-    tfs = load_transcription_factors(tf_filepath)
-    selected_tfs = pick_random_common_elements(list(expression_df.columns), tfs)
+    # # Load transcription factors
+    # tfs = load_transcription_factors(tf_filepath)
+    # selected_tfs = pick_random_common_elements(list(expression_df.columns), tfs)
     
-    # Extract ligands and receptors
-    ligands = []
-    receptors = []
+    # # Extract ligands and receptors
+    # ligands = []
+    # receptors = []
     
-    for key, value in sub_lr_dict.items():
-        receptors.append(key)
-        ligands += value
-    ligands = list(set(ligands))
-    mask_indexes = generate_mask_index(ligands, sub_lr_dict)
+    # for key, value in sub_lr_dict.items():
+    #     receptors.append(key)
+    #     ligands += value
+    # ligands = list(set(ligands))
+    # mask_indexes = generate_mask_index(ligands, sub_lr_dict)
     
     # Form sub-dataframe and normalize
-    subdf = expression_df[ligands + receptors + selected_tfs]
+    # subdf = expression_df[ligands + receptors + selected_tfs]
     scaler = MinMaxScaler()
-    subdf = pd.DataFrame(scaler.fit_transform(subdf), index=subdf.index, columns=subdf.columns)
+    expression_df = pd.DataFrame(scaler.fit_transform(expression_df), index=expression_df.index, columns=expression_df.columns)
     
     # Build graph from spatial coordinates
     if 'spatial' in adata.obsm:
@@ -136,7 +136,7 @@ def train_model(
         feature_list = []
         
         label = cell_label_dict[node_id_list[subgraph_node]]
-        main_feature = subdf.loc[node_id_list[subgraph_node]].tolist()
+        main_feature = expression_df.loc[node_id_list[subgraph_node]].tolist()
         feature_list.append(main_feature)
         
         index = 0
@@ -145,7 +145,7 @@ def train_model(
         for node in subgraph.nodes():
             if node != subgraph_node:
                 node_list.append(node)
-                main_feature = subdf.loc[node_id_list[node]].tolist()
+                main_feature = expression_df.loc[node_id_list[node]].tolist()
                 feature_list.append(main_feature)
                 if index > 0:
                     edge_list_source.append(0)
@@ -160,9 +160,9 @@ def train_model(
     # Log dataset statistics
     print(f"Number of graphs: {len(features)}") 
     print(f"Number of genes: {len(features[0][0])}")
-    print(f"Number of ligands: {len(ligands)}")
-    print(f"Number of receptors: {len(sub_lr_dict)}")
-    print(f"Number of TFs: {len(selected_tfs)}")
+    # print(f"Number of ligands: {len(ligands)}")
+    # print(f"Number of receptors: {len(sub_lr_dict)}")
+    # print(f"Number of TFs: {len(selected_tfs)}")
     print(f"Neighbor threshold ratio: {hyperparameters['neighbor_threshold_ratio']}")
     print(f"Train ratio: {hyperparameters['train_ratio']}")
     print(f"Validation ratio: {hyperparameters['val_ratio']}")
@@ -214,9 +214,9 @@ def train_model(
     fc_hidden_channels_3 = 512
     fc_hidden_channels_4 = 64
     
-    ligand_channel = len(ligands)
-    receptor_channel = len(sub_lr_dict)
-    tf_channel = len(selected_tfs)
+    # ligand_channel = len(ligands)
+    # receptor_channel = len(sub_lr_dict)
+    # tf_channel = len(selected_tfs)
     
     model = GATGraphClassifier(
         FChidden_channels_2=fc_hidden_channels_2,
@@ -224,10 +224,10 @@ def train_model(
         FChidden_channels_4=fc_hidden_channels_4,
         num_classes=num_classes,
         device=device,
-        ligand_channel=ligand_channel,
-        receptor_channel=receptor_channel,
-        TF_channel=tf_channel,
-        mask_indexes=mask_indexes
+        # ligand_channel=ligand_channel,
+        # receptor_channel=receptor_channel,
+        # TF_channel=tf_channel,
+        # mask_indexes=mask_indexes
     ).to(device)
 
     optimizer = Adam(model.parameters(), lr=hyperparameters['lr'])
