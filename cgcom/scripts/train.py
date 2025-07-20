@@ -24,7 +24,7 @@ from tqdm import tqdm
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import precision_recall_fscore_support
 from sklearn.preprocessing import MinMaxScaler
-from cgcom.models import GATGraphClassifier
+from cgcom.models import GATGraphClassifier, SimpleGATGraphClassifier
 from collections import Counter
 
 def communicationrecorder(model, total_loader, node_id_list, filtered_original_node_ids, output_path, device):
@@ -211,20 +211,15 @@ def train_model(
     fc_hidden_channels_3 = 512
     fc_hidden_channels_4 = 64
     
-    # ligand_channel = len(ligands)
-    # receptor_channel = len(sub_lr_dict)
-    # tf_channel = len(selected_tfs)
+    input_channels = expression_df.shape[1]  # Number of genes
     
-    model = GATGraphClassifier(
-        FChidden_channels_2=fc_hidden_channels_2,
-        FChidden_channels_3=fc_hidden_channels_3,
-        FChidden_channels_4=fc_hidden_channels_4,
+    model = SimpleGATGraphClassifier(
+        input_channels=input_channels,
+        hidden_channels_1=128,
+        hidden_channels_2=fc_hidden_channels_3,
+        hidden_channels_3=fc_hidden_channels_4,
         num_classes=num_classes,
-        device=device,
-        # ligand_channel=ligand_channel,
-        # receptor_channel=receptor_channel,
-        # TF_channel=tf_channel,
-        # mask_indexes=mask_indexes
+        device=device
     ).to(device)
 
     optimizer = Adam(model.parameters(), lr=hyperparameters['lr'])
@@ -323,13 +318,13 @@ def train_model(
     
     torch.save(model, model_path)
     
-    # Record communication patterns
-    communicationrecorder(model, total_loader, node_id_list, filtered_original_node_ids, output_path, device)
+    # Record communication patterns - only works with original GATGraphClassifier
+    # communicationrecorder(model, total_loader, node_id_list, filtered_original_node_ids, output_path, device)
     
-    # Save features information
-    pickle_output_file = output_path + f"Feature_{dataset_name}.pkl"
-    with open(pickle_output_file, 'wb') as f:
-        pickle.dump([ligands, receptors, selected_tfs, sub_lr_dict], f)
+    # Save features information - commented out since we're not using specific L-R-TF features
+    # pickle_output_file = output_path + f"Feature_{dataset_name}.pkl"
+    # with open(pickle_output_file, 'wb') as f:
+    #     pickle.dump([ligands, receptors, selected_tfs, sub_lr_dict], f)
     
     print(f"Training completed. Model saved to {model_path}")
     print(f"Additional outputs saved to {output_path}")

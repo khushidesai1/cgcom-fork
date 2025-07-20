@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch_geometric.nn import GATConv, global_mean_pool
 
 
 class CustomGATConv(nn.Module):
@@ -91,3 +92,39 @@ class GATGraphClassifier(nn.Module):
         
        
         return x,communication,attention_coefficients,V
+
+
+class SimpleGATGraphClassifier(nn.Module):
+    def __init__(self, input_channels, hidden_channels_1, hidden_channels_2, hidden_channels_3, num_classes, device):
+        super(SimpleGATGraphClassifier, self).__init__()
+        self.device = device
+        
+        # Use standard PyTorch Geometric GAT layers
+        self.gat1 = GATConv(input_channels, hidden_channels_1, heads=4, dropout=0.1)
+        self.gat2 = GATConv(hidden_channels_1 * 4, hidden_channels_2, heads=1, dropout=0.1)
+        
+        # Classification layers
+        self.fc1 = nn.Linear(hidden_channels_2, hidden_channels_3)
+        self.fc2 = nn.Linear(hidden_channels_3, num_classes)
+        self.dropout = nn.Dropout(0.5)
+        
+    def forward(self, x, edge_index, batch):
+        # GAT layers
+        x = F.elu(self.gat1(x, edge_index))
+        x = self.dropout(x)
+        x = F.elu(self.gat2(x, edge_index))
+        
+        # Global pooling (mean pooling for each graph)
+        x = global_mean_pool(x, batch)
+        
+        # Classification
+        x = F.elu(self.fc1(x))
+        x = self.dropout(x)
+        x = self.fc2(x)
+        
+        # Return dummy values for compatibility with existing code
+        dummy_communication = torch.zeros(1, device=self.device)
+        dummy_attention = torch.zeros(1, device=self.device) 
+        dummy_V = torch.zeros(1, device=self.device)
+        
+        return x, dummy_communication, dummy_attention, dummy_V
