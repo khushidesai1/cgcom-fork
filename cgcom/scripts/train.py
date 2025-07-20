@@ -1,6 +1,7 @@
 import os
 import torch
 import pickle
+import numpy as np
 from cgcom.utils import (
     convert_anndata_to_df,
     get_cell_label_dict,
@@ -104,21 +105,15 @@ def train_model(
     
     # Build graph from spatial coordinates
     if 'spatial' in adata.obsm:
-        cell_locations = adata.obsm['spatial']
-        location_df = pd.DataFrame(cell_locations, index=adata.obs_names, columns=['x', 'y'])
-        
-        # Save location file temporarily
-        temp_location_path = f"{output_dir}/temp_location.csv"
-        os.makedirs(os.path.dirname(temp_location_path), exist_ok=True)
-        location_df.to_csv(temp_location_path)
+        cell_locations_df = adata.obsm['spatial']
+        if type(cell_locations_df) == np.ndarray:
+            cell_locations_df = pd.DataFrame(cell_locations_df, index=adata.obs_names, columns=['X', 'Y'])
         
         G, distance_dict, location_list, node_id_list, min_location, max_location = build_graph(
-            cell_locations_df=location_df,
+            cell_locations_df=cell_locations_df,
             directed=True
         )
         
-        # Clean up temp file
-        os.remove(temp_location_path)
     else:
         raise ValueError("Dataset must contain spatial coordinates in adata.obsm['spatial']")
     
@@ -159,8 +154,9 @@ def train_model(
         edges.append([edge_list_source, edge_list_target])
     
     # Log dataset statistics
+    print(f"Expression dataframe shape: {expression_df.shape}")
     print(f"Number of graphs: {len(features)}") 
-    print(f"Number of genes: {len(features[0][0])}")
+    # print(f"Number of genes: {len(features[0][0])}")
     # print(f"Number of ligands: {len(ligands)}")
     # print(f"Number of receptors: {len(sub_lr_dict)}")
     # print(f"Number of TFs: {len(selected_tfs)}")

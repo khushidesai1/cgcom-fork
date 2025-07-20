@@ -217,7 +217,7 @@ def get_cell_locations_df(adata):
     Get the cell locations.
     """
     cell_locations = adata.obsm["spatial"]
-    cell_locations_df = pd.DataFrame(cell_locations, index=adata.obs_names, columns=["x", "y"])
+    cell_locations_df = pd.DataFrame(cell_locations, index=adata.obs_names, columns=["X", "Y"])
     return cell_locations_df
 
 
@@ -234,7 +234,7 @@ def build_graph(cell_locations_df, directed=True):
     nodeidlist = []
     minlocation = 9999999999999
     maxlocation = 0
-    for location in cell_locations_df[["x", "y"]].values:
+    for location in cell_locations_df[["X", "Y"]].values:
         x = location[0]
         y = location[1]
         G.add_node(i, pos=(x, y))
