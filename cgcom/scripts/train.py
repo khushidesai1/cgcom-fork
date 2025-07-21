@@ -54,10 +54,9 @@ def train_model(
     exp_params,
     model_params,
     dataset_path,
-    output_model_path=None,
+    model_path=None,
     lr_filepath="./data/all_lr.csv",
     tf_filepath="./data/TFlist.txt",
-    output_dir="./saved_models",
     dataset_name="default",
     labels_key="cell_type",
     disable_lr_masking=False
@@ -345,43 +344,37 @@ def train_model(
         print(f'Epoch: {epoch+1}, Train Loss: {train_loss:.4f}, Validate Loss: {validate_loss:.4f}, Train Acc: {train_acc:.4f}, Validate Acc: {validate_acc:.4f}, Test Acc: {test_acc:.4f}, LR: {current_lr:.6f}')
     
     # Save model and results
-    if output_model_path is None:
-        output_path = f"{output_dir}/{dataset_name}_{exp_params['neighbor_threshold_ratio']}/"
-        os.makedirs(output_path, exist_ok=True)
-        model_path = output_path + f'trained_model_{dataset_name}_{exp_params["neighbor_threshold_ratio"]}.pt'
-    else:
-        # Create directory if it doesn't exist
-        os.makedirs(os.path.dirname(output_model_path), exist_ok=True)
-        model_path = output_model_path
-        output_path = os.path.dirname(output_model_path) + "/"
+    if model_path is None:
+        model_path = f"saved_models/cgcom_{dataset_name}_{exp_params["neighbor_threshold_ratio"]}.pt"
     
+    os.makedirs(os.path.dirname(model_path), exist_ok=True)
     torch.save(model, model_path)
 
     # Save model parameters
-    model_params_path = output_path + f'model_params_{dataset_name}_{exp_params["neighbor_threshold_ratio"]}.pkl'
+    model_params_path = f"{os.path.dirname(model_path)}/cgcom_model_params.pkl"
     with open(model_params_path, 'wb') as f:
         pickle.dump(model_params, f)
     
     # Record communication patterns - works with GATGraphClassifier in both modes
     # Communication patterns are available whether LR masking is enabled or disabled
-    communication_recorder(model, total_loader, node_id_list, filtered_original_node_ids, output_path, device)
+    communication_recorder(model, total_loader, node_id_list, filtered_original_node_ids, model_path, device)
     
     # Save features information
     if not disable_lr_masking:
         # Save L-R-TF feature information when using biological constraints
-        pickle_output_file = output_path + f"Feature_{dataset_name}.pkl"
+        pickle_output_file = f"{os.path.dirname(model_path)}/Feature_{dataset_name}.pkl"
         with open(pickle_output_file, 'wb') as f:
             pickle.dump([ligands, receptors, selected_tfs, sub_lr_dict], f)
-        print(f"L-R-TF features saved to {output_path}")
+        print(f"L-R-TF features saved to {os.path.dirname(model_path)}")
     else:
         # Save gene list when using full gene set
-        pickle_output_file = output_path + f"Genes_{dataset_name}.pkl"
+        pickle_output_file = f"{os.path.dirname(model_path)}/Genes_{dataset_name}.pkl"
         with open(pickle_output_file, 'wb') as f:
             pickle.dump(list(expression_df.columns), f)
-        print(f"Gene features saved to {output_path}")
+        print(f"Gene features saved to {os.path.dirname(model_path)}")
     
     print(f"Training completed. Model saved to {model_path}")
-    print(f"Communication patterns and additional outputs saved to {output_path}")
+    print(f"Communication patterns and additional outputs saved to {os.path.dirname(model_path)}")
     print(f"LR masking was {'DISABLED' if disable_lr_masking else 'ENABLED'}")
     
     return model, model_path
