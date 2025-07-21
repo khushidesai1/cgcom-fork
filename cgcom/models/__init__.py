@@ -1,3 +1,3 @@
-from .model import GATGraphClassifier, SimpleGATGraphClassifier
+from .model import GATGraphClassifier
 
-__all__ = ['GATGraphClassifier', 'SimpleGATGraphClassifier'] 
+__all__ = ['GATGraphClassifier'] 
