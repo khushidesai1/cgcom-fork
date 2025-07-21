@@ -27,7 +27,7 @@ from sklearn.preprocessing import MinMaxScaler
 from cgcom.models import GATGraphClassifier, SimpleGATGraphClassifier
 from collections import Counter
 
-def communicationrecorder(model, total_loader, node_id_list, filtered_original_node_ids, output_path, device):
+def communication_recorder(model, total_loader, node_id_list, filtered_original_node_ids, output_path, device):
     model.eval()
     with torch.no_grad():
         for data, node_lists in tqdm(zip(total_loader, filtered_original_node_ids), total=len(filtered_original_node_ids)):
@@ -80,6 +80,7 @@ def train_model(
     expression_df = convert_anndata_to_df(adata)
     cell_label_dict = get_cell_label_dict(adata, labels_key)
     
+    # Commented out the LR pair since we are not using it for semisynthetic runs
     # Load ligand-receptor mapping
     # lr_mapping = load_csv_and_create_dict(lr_filepath)
     # sub_lr_dict = generate_sub_dictionary(lr_mapping, list(expression_df.columns))

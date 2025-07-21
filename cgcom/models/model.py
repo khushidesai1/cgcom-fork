@@ -5,84 +5,110 @@ from torch_geometric.nn import GATConv, global_mean_pool
 
 
 class CustomGATConv(nn.Module):
-    def __init__(self, p1_channels, p2_channels, mask_indexes,device):
+    def __init__(self, p1_channels, p2_channels, mask_indexes, device, disable_lr_masking=False):
         super(CustomGATConv, self).__init__()
         self.p1_channels = p1_channels
         self.p2_channels = p2_channels
         self.device = device
+        self.disable_lr_masking = disable_lr_masking
+        
         # Trainable weight matrices
         self.W_query = nn.Linear(p2_channels, p2_channels)
         self.W_value = nn.Linear(p2_channels, p2_channels)
         # Initialize W_key with trainable and non-trainable parts
-         # Initialization code
-        self.W_key = nn.Parameter(torch.Tensor(p1_channels,p2_channels)).to(device)  # Correct shape
-        self.mask =  torch.Tensor(p2_channels,p1_channels).fill_(0).to(device) # Correct shape  # Correct shape
-        for mask_index in mask_indexes:
-            self.mask[mask_index[0], mask_index[1]] = 1
+        self.W_key = nn.Parameter(torch.Tensor(p1_channels, p2_channels)).to(device)
         
-        print(self.W_key.shape)
-        print(self.mask.shape)
+        # Create mask
+        self.mask = torch.Tensor(p2_channels, p1_channels).fill_(0).to(device)
+        
+        if disable_lr_masking:
+            # Allow all connections - set mask to all ones
+            self.mask.fill_(1)
+        else:
+            # Use LR pairs only
+            for mask_index in mask_indexes:
+                self.mask[mask_index[0], mask_index[1]] = 1
+        
+        print(f"W_key shape: {self.W_key.shape}")
+        print(f"Mask shape: {self.mask.shape}")
+        print(f"LR masking disabled: {disable_lr_masking}")
 
         self._init_weights()
-
 
     def _init_weights(self):
         nn.init.xavier_uniform_(self.W_query.weight)
         nn.init.xavier_uniform_(self.W_value.weight)
         nn.init.xavier_uniform_(self.W_key)
-        # nn.init.xavier_uniform_(self.attention_scoring)
         self.W_key.data *= (self.mask.T)
 
-
-    def forward(self, x, edge_index,batch):
-        # Splitting input features        
-        P1, P2 = x[:, :self.p1_channels], x[:, self.p1_channels:self.p1_channels+self.p2_channels]
+    def forward(self, x, edge_index, batch):
+        if self.disable_lr_masking:
+            # Both P1 and P2 use the full gene set (same input)
+            P1 = x[:, :self.p1_channels]  # Full genes
+            P2 = x[:, :self.p2_channels]  # Same full genes
+        else:
+            # Original LR splitting
+            P1, P2 = x[:, :self.p1_channels], x[:, self.p1_channels:self.p1_channels+self.p2_channels]
+        
         maskedweight = self.W_key * (self.mask.T)
-        # Create a DataFrame from the numpy array
         maskedweight = maskedweight.T
+        
         # Compute Key, Query, Value
         K = F.linear(P1, maskedweight)
         manual_output = P1.unsqueeze(1) * maskedweight.unsqueeze(0)        
         Q = self.W_query(P2)
-        # focuesedQ = torch.stack([Q[batch == i][0] for i in range(batch.max() + 1)])
-        # Reshape Q to [6445, 24, 1] for broadcasting
-        Q_expanded = Q.unsqueeze(-1)  # Adds a new dimension at the end
+        Q_expanded = Q.unsqueeze(-1)
 
         # Perform element-wise multiplication
         communication = manual_output * Q_expanded
         V = self.W_value(P2)
+        
         # Querying
         alpha = Q * K 
         alpha = alpha - alpha.max()
         attention_coefficients = F.softmax(alpha, dim=0)
-        return attention_coefficients * V,communication,attention_coefficients,V
+        
+        return attention_coefficients * V, communication, attention_coefficients, V
 
 
 class GATGraphClassifier(nn.Module):
-    def __init__(self, FChidden_channels_2,FChidden_channels_3,FChidden_channels_4, num_classes,device,ligand_channel,receptor_channel,TF_channel,mask_indexes):
+    def __init__(self, FChidden_channels_2, FChidden_channels_3, FChidden_channels_4, num_classes, device, 
+                 ligand_channel, receptor_channel, TF_channel, mask_indexes, disable_lr_masking=False):
         super(GATGraphClassifier, self).__init__()
-        # p1_channels, p2_channels, out_channels,mask_indexes,device
         
-        self.gat_conv = CustomGATConv(ligand_channel, receptor_channel, mask_indexes,device)
+        self.gat_conv = CustomGATConv(ligand_channel, receptor_channel, mask_indexes, device, disable_lr_masking)
         self.communicationFC1 = nn.Linear(receptor_channel, FChidden_channels_3)        
-        self.communicationFC2= nn.Linear(FChidden_channels_3, FChidden_channels_4)
+        self.communicationFC2 = nn.Linear(FChidden_channels_3, FChidden_channels_4)
         
-        self.fc1 = nn.Linear(ligand_channel+receptor_channel+TF_channel, FChidden_channels_2)        
+        # Adjust input size for fc1 based on whether LR masking is disabled
+        if disable_lr_masking:
+            # When disabled, we use full genes for both ligand and receptor channels
+            # so total input is ligand_channel + TF_channel (no separate receptor channel)
+            fc1_input_size = ligand_channel + TF_channel
+        else:
+            # Original: ligand + receptor + TF channels
+            fc1_input_size = ligand_channel + receptor_channel + TF_channel
+            
+        self.fc1 = nn.Linear(fc1_input_size, FChidden_channels_2)        
         self.fc2 = nn.Linear(FChidden_channels_2, FChidden_channels_3)
         self.fc3 = nn.Linear(FChidden_channels_3, FChidden_channels_4)
-        self.fc4 = nn.Linear(2*FChidden_channels_4, num_classes)
+        self.fc4 = nn.Linear(2 * FChidden_channels_4, num_classes)
         self.dropout = nn.Dropout()
+        
+        self.disable_lr_masking = disable_lr_masking
 
     def forward(self, x, edge_index, batch):
-
-        x1,communication,attention_coefficients,V = self.gat_conv(x, edge_index,batch)
+        x1, communication, attention_coefficients, V = self.gat_conv(x, edge_index, batch)
         x1 = torch.stack([x1[batch == i][0] for i in range(batch.max() + 1)])
         x1 = self.communicationFC1(x1)
         x1 = self.dropout(x1)
         x1 = self.communicationFC2(x1)
         x1 = self.dropout(x1)
         
-        x2 = self.fc1(torch.stack([x[batch == i][0] for i in range(batch.max() + 1)]))
+        # Extract center node features for direct pathway
+        x2_input = torch.stack([x[batch == i][0] for i in range(batch.max() + 1)])
+        
+        x2 = self.fc1(x2_input)
         x2 = self.dropout(x2)
         x2 = self.fc2(x2)
         x2 = self.dropout(x2)
@@ -90,41 +116,4 @@ class GATGraphClassifier(nn.Module):
         x2 = self.dropout(x2)
         x = self.fc4(torch.cat((x1, x2), dim=1))
         
-       
-        return x,communication,attention_coefficients,V
-
-
-class SimpleGATGraphClassifier(nn.Module):
-    def __init__(self, input_channels, hidden_channels_1, hidden_channels_2, hidden_channels_3, num_classes, device):
-        super(SimpleGATGraphClassifier, self).__init__()
-        self.device = device
-        
-        # Use standard PyTorch Geometric GAT layers
-        self.gat1 = GATConv(input_channels, hidden_channels_1, heads=4, dropout=0.1)
-        self.gat2 = GATConv(hidden_channels_1 * 4, hidden_channels_2, heads=1, dropout=0.1)
-        
-        # Classification layers
-        self.fc1 = nn.Linear(hidden_channels_2, hidden_channels_3)
-        self.fc2 = nn.Linear(hidden_channels_3, num_classes)
-        self.dropout = nn.Dropout(0.5)
-        
-    def forward(self, x, edge_index, batch):
-        # GAT layers
-        x = F.elu(self.gat1(x, edge_index))
-        x = self.dropout(x)
-        x = F.elu(self.gat2(x, edge_index))
-        
-        # Global pooling (mean pooling for each graph)
-        x = global_mean_pool(x, batch)
-        
-        # Classification
-        x = F.elu(self.fc1(x))
-        x = self.dropout(x)
-        x = self.fc2(x)
-        
-        # Return dummy values for compatibility with existing code
-        dummy_communication = torch.zeros(1, device=self.device)
-        dummy_attention = torch.zeros(1, device=self.device) 
-        dummy_V = torch.zeros(1, device=self.device)
-        
-        return x, dummy_communication, dummy_attention, dummy_V
+        return x, communication, attention_coefficients, V
