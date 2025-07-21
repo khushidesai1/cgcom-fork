@@ -178,7 +178,7 @@ def read_color():
 
     return colordict
 
-def get_hyperparameters(lr=0.01, num_epochs=100, batch_size=128, train_ratio=0.9, val_ratio=0.05, neighbor_threshold_ratio=0.01):
+def get_exp_params(lr=0.01, num_epochs=100, batch_size=128, train_ratio=0.9, val_ratio=0.05, neighbor_threshold_ratio=0.01):
     """
     Initialize the hyperparameters for the CGCom model.
     """
@@ -192,6 +192,13 @@ def get_hyperparameters(lr=0.01, num_epochs=100, batch_size=128, train_ratio=0.9
     }
     return hyperparameters
 
+def get_model_params(fc_hidden_channels_2=1083, fc_hidden_channels_3=512, fc_hidden_channels_4=64):
+    model_params = {
+        "fc_hidden_channels_2": fc_hidden_channels_2,
+        "fc_hidden_channels_3": fc_hidden_channels_3,
+        "fc_hidden_channels_4": fc_hidden_channels_4
+    }
+    return model_params
 
 def convert_anndata_to_df(adata):
     """

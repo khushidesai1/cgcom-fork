@@ -51,7 +51,8 @@ def communication_recorder(model, total_loader, node_id_list, filtered_original_
                 pickle.dump(list(all_node_ids), f)
 
 def train_model(
-    hyperparameters,
+    exp_params,
+    model_params,
     dataset_path,
     output_model_path=None,
     lr_filepath="./data/all_lr.csv",
@@ -64,7 +65,8 @@ def train_model(
     """
     Train the CGCom model.
     Args:
-        hyperparameters (dict): Dictionary containing training hyperparameters.
+        exp_params (dict): Dictionary containing training hyperparameters.
+        model_params (dict): Dictionary containing model hyperparameters.
         dataset_path (str): Path to the dataset.
         output_model_path (str): Path to save the trained model. If None, uses default naming.
         lr_filepath (str): Path to ligand-receptor database.
@@ -126,7 +128,7 @@ def train_model(
     else:
         raise ValueError("Dataset must contain spatial coordinates in adata.obsm['spatial']")
     
-    G, edge_list = read_edges_to_graph(G, location_list, distance_dict, hyperparameters['neighbor_threshold_ratio'], min_location, max_location)
+    G, edge_list = read_edges_to_graph(G, location_list, distance_dict, exp_params['neighbor_threshold_ratio'], min_location, max_location)
     
     # Generate subgraphs and features
     original_node_ids = []
@@ -177,9 +179,9 @@ def train_model(
         print(f"Number of TFs: {len(selected_tfs)}")
         print(f"Number of L-R pairs: {len(mask_indexes)}")
     
-    print(f"Neighbor threshold ratio: {hyperparameters['neighbor_threshold_ratio']}")
-    print(f"Train ratio: {hyperparameters['train_ratio']}")
-    print(f"Validation ratio: {hyperparameters['val_ratio']}")
+    print(f"Neighbor threshold ratio: {exp_params['neighbor_threshold_ratio']}")
+    print(f"Train ratio: {exp_params['train_ratio']}")
+    print(f"Validation ratio: {exp_params['val_ratio']}")
     
     # Filter out classes with only one instance
     class_counts = Counter(labels)
@@ -194,8 +196,8 @@ def train_model(
     dataset, num_classes = generate_graph(filtered_edges, filtered_features, filtered_labels)
     
     # Calculate split sizes
-    train_size = int(hyperparameters['train_ratio'] * len(dataset))
-    valid_size = int(hyperparameters['val_ratio'] * len(dataset))
+    train_size = int(exp_params['train_ratio'] * len(dataset))
+    valid_size = int(exp_params['val_ratio'] * len(dataset))
     test_size = len(dataset) - train_size - valid_size
     
     # Split dataset
@@ -218,16 +220,12 @@ def train_model(
     valid_dataset = [dataset[i] for i in valid_idx]
     test_dataset = [dataset[i] for i in test_idx]
     
-    train_loader = DataLoader(train_dataset, batch_size=hyperparameters['batch_size'], shuffle=True)
-    validate_loader = DataLoader(valid_dataset, batch_size=hyperparameters['batch_size'], shuffle=True)
-    test_loader = DataLoader(test_dataset, batch_size=hyperparameters['batch_size'], shuffle=False)
+    train_loader = DataLoader(train_dataset, batch_size=exp_params['batch_size'], shuffle=True)
+    validate_loader = DataLoader(valid_dataset, batch_size=exp_params['batch_size'], shuffle=True)
+    test_loader = DataLoader(test_dataset, batch_size=exp_params['batch_size'], shuffle=False)
     total_loader = DataLoader(dataset, batch_size=1, shuffle=False)
     
     # Initialize the model
-    fc_hidden_channels_2 = 1083
-    fc_hidden_channels_3 = 512
-    fc_hidden_channels_4 = 64
-    
     input_channels = expression_df.shape[1]  # Number of genes
     
     if disable_lr_masking:
@@ -242,10 +240,18 @@ def train_model(
         receptor_channel = len(receptors)
         TF_channel = len(selected_tfs)
     
+    model_params['num_classes'] = num_classes
+    model_params['device'] = device
+    model_params['ligand_channel'] = ligand_channel
+    model_params['receptor_channel'] = receptor_channel
+    model_params['TF_channel'] = TF_channel
+    model_params['mask_indexes'] = mask_indexes
+    model_params['disable_lr_masking'] = disable_lr_masking
+
     model = GATGraphClassifier(
-        FChidden_channels_2=fc_hidden_channels_2,
-        FChidden_channels_3=fc_hidden_channels_3,
-        FChidden_channels_4=fc_hidden_channels_4,
+        FChidden_channels_2=model_params['fc_hidden_channels_2'],
+        FChidden_channels_3=model_params['fc_hidden_channels_3'],
+        FChidden_channels_4=model_params['fc_hidden_channels_4'],
         num_classes=num_classes,
         device=device,
         ligand_channel=ligand_channel,
@@ -255,11 +261,11 @@ def train_model(
         disable_lr_masking=disable_lr_masking
     ).to(device)
 
-    optimizer = Adam(model.parameters(), lr=hyperparameters['lr'])
+    optimizer = Adam(model.parameters(), lr=exp_params['lr'])
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=10)
 
     # Training loop
-    for epoch in range(hyperparameters['num_epochs']):
+    for epoch in range(exp_params['num_epochs']):
         # Training phase
         model.train()
         train_total_loss = 0
@@ -340,9 +346,9 @@ def train_model(
     
     # Save model and results
     if output_model_path is None:
-        output_path = f"{output_dir}/{dataset_name}_{hyperparameters['neighbor_threshold_ratio']}/"
+        output_path = f"{output_dir}/{dataset_name}_{exp_params['neighbor_threshold_ratio']}/"
         os.makedirs(output_path, exist_ok=True)
-        model_path = output_path + f'trained_model_{dataset_name}_{hyperparameters["neighbor_threshold_ratio"]}.pt'
+        model_path = output_path + f'trained_model_{dataset_name}_{exp_params["neighbor_threshold_ratio"]}.pt'
     else:
         # Create directory if it doesn't exist
         os.makedirs(os.path.dirname(output_model_path), exist_ok=True)
@@ -350,6 +356,11 @@ def train_model(
         output_path = os.path.dirname(output_model_path) + "/"
     
     torch.save(model, model_path)
+
+    # Save model parameters
+    model_params_path = output_path + f'model_params_{dataset_name}_{exp_params["neighbor_threshold_ratio"]}.pkl'
+    with open(model_params_path, 'wb') as f:
+        pickle.dump(model_params, f)
     
     # Record communication patterns - works with GATGraphClassifier in both modes
     # Communication patterns are available whether LR masking is enabled or disabled
