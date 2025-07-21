@@ -24,7 +24,7 @@ from tqdm import tqdm
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import precision_recall_fscore_support
 from sklearn.preprocessing import MinMaxScaler
-from cgcom.models import GATGraphClassifier, SimpleGATGraphClassifier
+from cgcom.models import GATGraphClassifier
 from collections import Counter
 
 def communication_recorder(model, total_loader, node_id_list, filtered_original_node_ids, output_path, device):
@@ -58,7 +58,8 @@ def train_model(
     tf_filepath="./data/TFlist.txt",
     output_dir="./saved_models",
     dataset_name="default",
-    labels_key="cell_type"
+    labels_key="cell_type",
+    disable_lr_masking=False
 ):
     """
     Train the CGCom model.
@@ -71,6 +72,7 @@ def train_model(
         output_dir (str): Directory to save outputs.
         dataset_name (str): Name of the dataset.
         labels_key (str): Key for cell type labels in anndata.
+        disable_lr_masking (bool): If True, disable LR biological prior and use full gene set.
     """
     torch.cuda.empty_cache()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -80,27 +82,33 @@ def train_model(
     expression_df = convert_anndata_to_df(adata)
     cell_label_dict = get_cell_label_dict(adata, labels_key)
     
-    # Commented out the LR pair since we are not using it for semisynthetic runs
-    # Load ligand-receptor mapping
-    # lr_mapping = load_csv_and_create_dict(lr_filepath)
-    # sub_lr_dict = generate_sub_dictionary(lr_mapping, list(expression_df.columns))
+    # Initialize variables for LR and TF features
+    ligands = []
+    receptors = []
+    selected_tfs = []
+    mask_indexes = []
+    sub_lr_dict = {}
     
-    # # Load transcription factors
-    # tfs = load_transcription_factors(tf_filepath)
-    # selected_tfs = pick_random_common_elements(list(expression_df.columns), tfs)
+    if not disable_lr_masking:
+        # Load ligand-receptor mapping
+        lr_mapping = load_csv_and_create_dict(lr_filepath)
+        sub_lr_dict = generate_sub_dictionary(lr_mapping, list(expression_df.columns))
+        
+        # Load transcription factors
+        tfs = load_transcription_factors(tf_filepath)
+        selected_tfs = pick_random_common_elements(list(expression_df.columns), tfs)
+        
+        # Extract ligands and receptors
+        for key, value in sub_lr_dict.items():
+            receptors.append(key)
+            ligands += value
+        ligands = list(set(ligands))
+        mask_indexes = generate_mask_index(ligands, sub_lr_dict)
+        
+        # Form sub-dataframe with L-R-TF features
+        expression_df = expression_df[ligands + receptors + selected_tfs]
     
-    # # Extract ligands and receptors
-    # ligands = []
-    # receptors = []
-    
-    # for key, value in sub_lr_dict.items():
-    #     receptors.append(key)
-    #     ligands += value
-    # ligands = list(set(ligands))
-    # mask_indexes = generate_mask_index(ligands, sub_lr_dict)
-    
-    # Form sub-dataframe and normalize
-    # subdf = expression_df[ligands + receptors + selected_tfs]
+    # Normalize expression data
     scaler = MinMaxScaler()
     expression_df = pd.DataFrame(scaler.fit_transform(expression_df), index=expression_df.index, columns=expression_df.columns)
     
@@ -157,10 +165,18 @@ def train_model(
     # Log dataset statistics
     print(f"Expression dataframe shape: {expression_df.shape}")
     print(f"Number of graphs: {len(features)}") 
-    # print(f"Number of genes: {len(features[0][0])}")
-    # print(f"Number of ligands: {len(ligands)}")
-    # print(f"Number of receptors: {len(sub_lr_dict)}")
-    # print(f"Number of TFs: {len(selected_tfs)}")
+    print(f"Number of genes: {len(features[0][0])}")
+    
+    if disable_lr_masking:
+        print("LR biological masking: DISABLED - using full gene set")
+        print(f"Using all {expression_df.shape[1]} genes without L-R constraints")
+    else:
+        print("LR biological masking: ENABLED")
+        print(f"Number of ligands: {len(ligands)}")
+        print(f"Number of receptors: {len(sub_lr_dict)}")
+        print(f"Number of TFs: {len(selected_tfs)}")
+        print(f"Number of L-R pairs: {len(mask_indexes)}")
+    
     print(f"Neighbor threshold ratio: {hyperparameters['neighbor_threshold_ratio']}")
     print(f"Train ratio: {hyperparameters['train_ratio']}")
     print(f"Validation ratio: {hyperparameters['val_ratio']}")
@@ -214,13 +230,29 @@ def train_model(
     
     input_channels = expression_df.shape[1]  # Number of genes
     
-    model = SimpleGATGraphClassifier(
-        input_channels=input_channels,
-        hidden_channels_1=128,
-        hidden_channels_2=fc_hidden_channels_3,
-        hidden_channels_3=fc_hidden_channels_4,
+    if disable_lr_masking:
+        # When LR masking is disabled, use full gene set for both ligand and receptor channels
+        ligand_channel = input_channels
+        receptor_channel = input_channels
+        TF_channel = 0  # No separate TF channel
+        mask_indexes = []  # Empty mask (not used)
+    else:
+        # When LR masking is enabled, use specific L-R-TF channels
+        ligand_channel = len(ligands)
+        receptor_channel = len(receptors)
+        TF_channel = len(selected_tfs)
+    
+    model = GATGraphClassifier(
+        FChidden_channels_2=fc_hidden_channels_2,
+        FChidden_channels_3=fc_hidden_channels_3,
+        FChidden_channels_4=fc_hidden_channels_4,
         num_classes=num_classes,
-        device=device
+        device=device,
+        ligand_channel=ligand_channel,
+        receptor_channel=receptor_channel,
+        TF_channel=TF_channel,
+        mask_indexes=mask_indexes,
+        disable_lr_masking=disable_lr_masking
     ).to(device)
 
     optimizer = Adam(model.parameters(), lr=hyperparameters['lr'])
@@ -319,15 +351,26 @@ def train_model(
     
     torch.save(model, model_path)
     
-    # Record communication patterns - only works with original GATGraphClassifier
-    # communicationrecorder(model, total_loader, node_id_list, filtered_original_node_ids, output_path, device)
+    # Record communication patterns - works with GATGraphClassifier in both modes
+    # Communication patterns are available whether LR masking is enabled or disabled
+    communication_recorder(model, total_loader, node_id_list, filtered_original_node_ids, output_path, device)
     
-    # Save features information - commented out since we're not using specific L-R-TF features
-    # pickle_output_file = output_path + f"Feature_{dataset_name}.pkl"
-    # with open(pickle_output_file, 'wb') as f:
-    #     pickle.dump([ligands, receptors, selected_tfs, sub_lr_dict], f)
+    # Save features information
+    if not disable_lr_masking:
+        # Save L-R-TF feature information when using biological constraints
+        pickle_output_file = output_path + f"Feature_{dataset_name}.pkl"
+        with open(pickle_output_file, 'wb') as f:
+            pickle.dump([ligands, receptors, selected_tfs, sub_lr_dict], f)
+        print(f"L-R-TF features saved to {output_path}")
+    else:
+        # Save gene list when using full gene set
+        pickle_output_file = output_path + f"Genes_{dataset_name}.pkl"
+        with open(pickle_output_file, 'wb') as f:
+            pickle.dump(list(expression_df.columns), f)
+        print(f"Gene features saved to {output_path}")
     
     print(f"Training completed. Model saved to {model_path}")
-    print(f"Additional outputs saved to {output_path}")
+    print(f"Communication patterns and additional outputs saved to {output_path}")
+    print(f"LR masking was {'DISABLED' if disable_lr_masking else 'ENABLED'}")
     
     return model, model_path
