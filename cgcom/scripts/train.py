@@ -50,69 +50,59 @@ def communication_recorder(model, total_loader, node_id_list, filtered_original_
             with open(pickle_output_file, 'wb') as f:
                 pickle.dump(list(all_node_ids), f)
 
-def train_model(
-    exp_params,
-    model_params,
-    dataset_path,
-    model_path=None,
-    lr_filepath="./data/all_lr.csv",
-    tf_filepath="./data/TFlist.txt",
-    dataset_name="default",
-    labels_key="cell_type",
-    disable_lr_masking=False
-):
+def apply_lr_prior(expression_df, lr_filepath, tf_filepath, disable_lr_masking=False):
     """
-    Train the CGCom model.
+    Apply LR prior to the expression dataframe.
     Args:
-        exp_params (dict): Dictionary containing training hyperparameters.
-        model_params (dict): Dictionary containing model hyperparameters.
-        dataset_path (str): Path to the dataset.
-        output_model_path (str): Path to save the trained model. If None, uses default naming.
+        expression_df (pd.DataFrame): Expression dataframe.
         lr_filepath (str): Path to ligand-receptor database.
         tf_filepath (str): Path to transcription factors list.
-        output_dir (str): Directory to save outputs.
-        dataset_name (str): Name of the dataset.
-        labels_key (str): Key for cell type labels in anndata.
         disable_lr_masking (bool): If True, disable LR biological prior and use full gene set.
+    Returns:
+        expression_df (pd.DataFrame): Expression dataframe with LR and TF features.
+        ligands (list): List of ligands.
+        receptors (list): List of receptors.
+        selected_tfs (list): List of transcription factors.
+        sub_lr_dict (dict): Dictionary of ligand-receptor pairs.
+        mask_indexes (list): List of mask indexes.
     """
-    torch.cuda.empty_cache()
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-    # Load dataset
-    adata = sc.read_h5ad(dataset_path)
-    expression_df = convert_anndata_to_df(adata)
-    cell_label_dict = get_cell_label_dict(adata, labels_key)
-    
     # Initialize variables for LR and TF features
     ligands = []
     receptors = []
     selected_tfs = []
     mask_indexes = []
     sub_lr_dict = {}
+
+    # Load ligand-receptor mapping
+    lr_mapping = load_csv_and_create_dict(lr_filepath)
+    sub_lr_dict = generate_sub_dictionary(lr_mapping, list(expression_df.columns))
     
-    if not disable_lr_masking:
-        # Load ligand-receptor mapping
-        lr_mapping = load_csv_and_create_dict(lr_filepath)
-        sub_lr_dict = generate_sub_dictionary(lr_mapping, list(expression_df.columns))
-        
-        # Load transcription factors
-        tfs = load_transcription_factors(tf_filepath)
-        selected_tfs = pick_random_common_elements(list(expression_df.columns), tfs)
-        
-        # Extract ligands and receptors
-        for key, value in sub_lr_dict.items():
-            receptors.append(key)
-            ligands += value
-        ligands = list(set(ligands))
-        mask_indexes = generate_mask_index(ligands, sub_lr_dict)
-        
-        # Form sub-dataframe with L-R-TF features
-        expression_df = expression_df[ligands + receptors + selected_tfs]
+    # Load transcription factors
+    tfs = load_transcription_factors(tf_filepath)
+    selected_tfs = pick_random_common_elements(list(expression_df.columns), tfs)
     
-    # Normalize expression data
-    scaler = MinMaxScaler()
-    expression_df = pd.DataFrame(scaler.fit_transform(expression_df), index=expression_df.index, columns=expression_df.columns)
+    # Extract ligands and receptors
+    for key, value in sub_lr_dict.items():
+        receptors.append(key)
+        ligands += value
+    ligands = list(set(ligands))
+    mask_indexes = generate_mask_index(ligands, sub_lr_dict)
     
+    # Form sub-dataframe with L-R-TF features
+    expression_df = expression_df[ligands + receptors + selected_tfs]
+    
+    return expression_df, ligands, receptors, selected_tfs, sub_lr_dict, mask_indexes
+
+def build_graph_from_spatial_data(adata, exp_params):
+    """
+    Build a graph from spatial data.
+    Args:
+        spatial_data_path (str): Path to spatial data.
+    Returns:
+        G (nx.Graph): Graph object.
+        edge_list (list): List of edges.
+        node_id_list (list): List of node IDs.
+    """
     # Build graph from spatial coordinates
     if 'spatial' in adata.obsm:
         cell_locations_df = adata.obsm['spatial']
@@ -128,7 +118,20 @@ def train_model(
         raise ValueError("Dataset must contain spatial coordinates in adata.obsm['spatial']")
     
     G, edge_list = read_edges_to_graph(G, location_list, distance_dict, exp_params['neighbor_threshold_ratio'], min_location, max_location)
-    
+    return G, edge_list, node_id_list
+
+def generate_subgraphs(G, node_id_list, cell_label_dict, expression_df, disable_lr_masking):
+    """
+    Generate subgraphs from the graph.
+    Args:
+        G (nx.Graph): Graph object.
+        node_id_list (list): List of node IDs.
+        cell_label_dict (dict): Dictionary of cell labels.
+        expression_df (pd.DataFrame): Expression dataframe.
+        disable_lr_masking (bool): If True, disable LR biological prior and use full gene set.
+    Returns:
+        original_node_ids (list): List of original node IDs.
+    """
     # Generate subgraphs and features
     original_node_ids = []
     features = []
@@ -163,25 +166,6 @@ def train_model(
         labels.append(label)
         edges.append([edge_list_source, edge_list_target])
     
-    # Log dataset statistics
-    print(f"Expression dataframe shape: {expression_df.shape}")
-    print(f"Number of graphs: {len(features)}") 
-    print(f"Number of genes: {len(features[0][0])}")
-    
-    if disable_lr_masking:
-        print("LR biological masking: DISABLED - using full gene set")
-        print(f"Using all {expression_df.shape[1]} genes without L-R constraints")
-    else:
-        print("LR biological masking: ENABLED")
-        print(f"Number of ligands: {len(ligands)}")
-        print(f"Number of receptors: {len(sub_lr_dict)}")
-        print(f"Number of TFs: {len(selected_tfs)}")
-        print(f"Number of L-R pairs: {len(mask_indexes)}")
-    
-    print(f"Neighbor threshold ratio: {exp_params['neighbor_threshold_ratio']}")
-    print(f"Train ratio: {exp_params['train_ratio']}")
-    print(f"Validation ratio: {exp_params['val_ratio']}")
-    
     # Filter out classes with only one instance
     class_counts = Counter(labels)
     filtered_indices = [i for i, label in enumerate(labels) if class_counts[label] > 1]
@@ -191,7 +175,24 @@ def train_model(
     filtered_edges = [edges[i] for i in filtered_indices]
     filtered_labels = [labels[i] for i in filtered_indices]
     filtered_original_node_ids = [original_node_ids[i] for i in filtered_indices]
-    
+
+    return filtered_features, filtered_edges, filtered_labels, filtered_original_node_ids
+
+def build_dataloaders(filtered_edges, filtered_features, filtered_labels, exp_params):
+    """
+    Build dataloaders for training, validation, and test sets.
+    Args:
+        filtered_edges (list): List of edges.
+        filtered_features (list): List of features.
+        filtered_labels (list): List of labels.
+        exp_params (dict): Dictionary containing training hyperparameters.
+    Returns:
+        train_loader (DataLoader): DataLoader for training set.
+        validate_loader (DataLoader): DataLoader for validation set.
+        test_loader (DataLoader): DataLoader for test set.
+        total_loader (DataLoader): DataLoader for total set.
+        num_classes (int): Number of classes.
+    """
     dataset, num_classes = generate_graph(filtered_edges, filtered_features, filtered_labels)
     
     # Calculate split sizes
@@ -223,6 +224,62 @@ def train_model(
     validate_loader = DataLoader(valid_dataset, batch_size=exp_params['batch_size'], shuffle=True)
     test_loader = DataLoader(test_dataset, batch_size=exp_params['batch_size'], shuffle=False)
     total_loader = DataLoader(dataset, batch_size=1, shuffle=False)
+
+    return train_loader, validate_loader, test_loader, total_loader, num_classes
+
+def train_model(
+    exp_params,
+    model_params,
+    dataset_path,
+    model_path=None,
+    lr_filepath="./data/all_lr.csv",
+    tf_filepath="./data/TFlist.txt",
+    dataset_name="default",
+    labels_key="cell_type",
+    disable_lr_masking=False
+):
+    """
+    Train the CGCom model.
+    Args:
+        exp_params (dict): Dictionary containing training hyperparameters.
+        model_params (dict): Dictionary containing model hyperparameters.
+        dataset_path (str): Path to the dataset.
+        output_model_path (str): Path to save the trained model. If None, uses default naming.
+        lr_filepath (str): Path to ligand-receptor database.
+        tf_filepath (str): Path to transcription factors list.
+        output_dir (str): Directory to save outputs.
+        dataset_name (str): Name of the dataset.
+        labels_key (str): Key for cell type labels in anndata.
+        disable_lr_masking (bool): If True, disable LR biological prior and use full gene set.
+    """
+    torch.cuda.empty_cache()
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    # Load dataset
+    adata = sc.read_h5ad(dataset_path)
+    expression_df = convert_anndata_to_df(adata)
+    cell_label_dict = get_cell_label_dict(adata, labels_key)
+
+    if not disable_lr_masking:
+        expression_df, ligands, receptors, selected_tfs, sub_lr_dict, mask_indexes = apply_lr_prior(expression_df, lr_filepath, tf_filepath)
+    
+    # Normalize expression data
+    scaler = MinMaxScaler()
+    expression_df = pd.DataFrame(scaler.fit_transform(expression_df), index=expression_df.index, columns=expression_df.columns)
+    
+    G, edge_list, node_id_list = build_graph_from_spatial_data(adata, exp_params)
+    
+    filtered_features, filtered_edges, filtered_labels, filtered_original_node_ids = generate_subgraphs(G, node_id_list, cell_label_dict, expression_df, disable_lr_masking)
+
+    # Log dataset statistics
+    print(f"Expression dataframe shape: {expression_df.shape}")
+    print(f"Number of graphs: {len(filtered_features)}") 
+    print(f"Number of genes: {len(filtered_features[0][0])}")
+    print(f"Neighbor threshold ratio: {exp_params['neighbor_threshold_ratio']}")
+    print(f"Train ratio: {exp_params['train_ratio']}")
+    print(f"Validation ratio: {exp_params['val_ratio']}")
+    
+    train_loader, validate_loader, test_loader, total_loader, num_classes = build_dataloaders(filtered_edges, filtered_features, filtered_labels, exp_params)
     
     # Initialize the model
     input_channels = expression_df.shape[1]  # Number of genes
