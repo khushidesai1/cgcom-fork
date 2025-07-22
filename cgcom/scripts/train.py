@@ -27,7 +27,19 @@ from sklearn.preprocessing import MinMaxScaler
 from cgcom.models import GATGraphClassifier
 from collections import Counter
 
-def communication_recorder(model, total_loader, node_id_list, filtered_original_node_ids, output_path, device):
+def get_cell_communication_scores(model, total_loader, node_id_list, filtered_original_node_ids, device):
+    """
+    Get cell communication scores for each cell.
+    Args:
+        model (torch.nn.Module): Trained model.
+        total_loader (DataLoader): DataLoader for total set.
+        node_id_list (list): List of node IDs.
+        filtered_original_node_ids (list): List of filtered original node IDs.
+        device (torch.device): Device to use for computation.   
+    Returns:
+        first_attention_dict (dict): Dictionary of first attention scores for each cell.
+    """
+    first_attention_dict = {}
     model.eval()
     with torch.no_grad():
         for data, node_lists in tqdm(zip(total_loader, filtered_original_node_ids), total=len(filtered_original_node_ids)):
@@ -39,16 +51,8 @@ def communication_recorder(model, total_loader, node_id_list, filtered_original_
             result = communication * first_v.unsqueeze(0).unsqueeze(-1)
             result = result - result.max()
             first_attention = F.softmax(result, dim=0).cpu()
-            
-            torch.save(first_attention, output_path + 'firstattention-' + str(list(node_lists)[0]) + '.pt')
-            
-            pickle_output_file = output_path + 'nodelist-' + str(list(node_lists)[0]) + '.pkl'
-            with open(pickle_output_file, 'wb') as f:
-                pickle.dump(list(node_lists), f)
-            
-            pickle_output_file = output_path + 'allnodeid-' + str(list(node_lists)[0]) + '.pkl'
-            with open(pickle_output_file, 'wb') as f:
-                pickle.dump(list(all_node_ids), f)
+            first_attention_dict[list(node_lists)[0]] = first_attention
+    return first_attention_dict
 
 def apply_lr_prior(expression_df, lr_filepath, tf_filepath, disable_lr_masking=False):
     """
@@ -414,7 +418,13 @@ def train_model(
     
     # Record communication patterns - works with GATGraphClassifier in both modes
     # Communication patterns are available whether LR masking is enabled or disabled
-    communication_recorder(model, total_loader, node_id_list, filtered_original_node_ids, model_path, device)
+    first_attention_dict = get_cell_communication_scores(model, total_loader, node_id_list, filtered_original_node_ids, device)
+
+    # Save communication patterns
+    pickle_output_file = f"{os.path.dirname(model_path)}/communication_scores_{dataset_name}.pkl"
+    with open(pickle_output_file, 'wb') as f:
+        pickle.dump(first_attention_dict, f)
+    print(f"Communication patterns saved to {os.path.dirname(model_path)}")
     
     # Save features information
     if not disable_lr_masking:
