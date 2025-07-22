@@ -406,7 +406,7 @@ def train_model(
     
     # Save model and results
     if model_path is None:
-        model_path = f"saved_models/cgcom_{dataset_name}_{exp_params["neighbor_threshold_ratio"]}.pt"
+        model_path = f"saved_models/cgcom_{dataset_name}_{exp_params['neighbor_threshold_ratio']}.pt"
     
     os.makedirs(os.path.dirname(model_path), exist_ok=True)
     torch.save(model, model_path)
