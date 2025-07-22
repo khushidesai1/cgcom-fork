@@ -124,7 +124,7 @@ def build_graph_from_spatial_data(adata, exp_params):
     G, edge_list = read_edges_to_graph(G, location_list, distance_dict, exp_params['neighbor_threshold_ratio'], min_location, max_location)
     return G, edge_list, node_id_list
 
-def generate_subgraphs(G, node_id_list, cell_label_dict, expression_df, disable_lr_masking):
+def generate_subgraph_features(G, node_id_list, cell_label_dict, expression_df):
     """
     Generate subgraphs from the graph.
     Args:
@@ -132,7 +132,6 @@ def generate_subgraphs(G, node_id_list, cell_label_dict, expression_df, disable_
         node_id_list (list): List of node IDs.
         cell_label_dict (dict): Dictionary of cell labels.
         expression_df (pd.DataFrame): Expression dataframe.
-        disable_lr_masking (bool): If True, disable LR biological prior and use full gene set.
     Returns:
         original_node_ids (list): List of original node IDs.
     """
@@ -273,7 +272,7 @@ def train_model(
     
     G, edge_list, node_id_list = build_graph_from_spatial_data(adata, exp_params)
     
-    filtered_features, filtered_edges, filtered_labels, filtered_original_node_ids = generate_subgraphs(G, node_id_list, cell_label_dict, expression_df, disable_lr_masking)
+    filtered_features, filtered_edges, filtered_labels, filtered_original_node_ids = generate_subgraph_features(G, node_id_list, cell_label_dict, expression_df)
 
     # Log dataset statistics
     print(f"Expression dataframe shape: {expression_df.shape}")
