@@ -29,7 +29,7 @@ from collections import Counter
 
 def get_cell_communication_scores(model, total_loader, node_id_list, filtered_original_node_ids, device):
     """
-    Get cell communication scores for each cell.
+    Get cell communication scores showing attention from center cells to their neighbors.
     Args:
         model (torch.nn.Module): Trained model.
         total_loader (DataLoader): DataLoader for total set.
@@ -37,22 +37,94 @@ def get_cell_communication_scores(model, total_loader, node_id_list, filtered_or
         filtered_original_node_ids (list): List of filtered original node IDs.
         device (torch.device): Device to use for computation.   
     Returns:
-        first_attention_dict (dict): Dictionary of first attention scores for each cell.
+        communication_df (pd.DataFrame): DataFrame with attention scores.
+                                       Columns: center_cell, neighbor_cell, attention_score, neighbor_position
     """
-    first_attention_dict = {}
     model.eval()
+    
+    # Lists to store results in long format (each row = center_cell -> neighbor_cell)
+    center_cells = []
+    neighbor_cells = []
+    attention_scores = []
+    neighbor_positions = []
+    
+    print("Computing cell-to-neighbor attention scores...")
+    
     with torch.no_grad():
-        for data, node_lists in tqdm(zip(total_loader, filtered_original_node_ids), total=len(filtered_original_node_ids)):
+        for data, node_lists in tqdm(zip(total_loader, filtered_original_node_ids), desc="Processing subgraphs"):
             data = data.to(device)
             out, communication, attention_coefficients, V = model(data.x, data.edge_index, data.batch)
-            first_v = V[0]
-            all_node_ids = [node_id_list[i] for i in node_lists]
             
+            # Get the first V (center cell features)
+            first_v = V[0]
+            
+            # Compute attention scores for this subgraph
             result = communication * first_v.unsqueeze(0).unsqueeze(-1)
             result = result - result.max()
-            first_attention = F.softmax(result, dim=0).cpu()
-            first_attention_dict[list(node_lists)[0]] = first_attention
-    return first_attention_dict
+            first_attention = F.softmax(result, dim=0).cpu().numpy()
+            
+            # Get cell IDs for this subgraph
+            subgraph_nodes = list(node_lists)
+            center_cell_id = node_id_list[subgraph_nodes[0]]  # First node is center
+            
+            # For each neighbor in the subgraph
+            for neighbor_pos, neighbor_node_idx in enumerate(subgraph_nodes):
+                neighbor_cell_id = node_id_list[neighbor_node_idx]
+                
+                # Extract attention score for this neighbor
+                # The attention tensor might have different shapes, so we need to handle this carefully
+                if len(first_attention.shape) == 1:
+                    # If 1D, each element corresponds to a node
+                    if neighbor_pos < len(first_attention):
+                        score = first_attention[neighbor_pos]
+                    else:
+                        score = 0.0
+                elif len(first_attention.shape) == 2:
+                    # If 2D, sum across feature dimensions for overall attention
+                    if neighbor_pos < first_attention.shape[0]:
+                        score = first_attention[neighbor_pos].sum()
+                    else:
+                        score = 0.0
+                else:
+                    # For higher dimensions, flatten and take appropriate index
+                    flat_attention = first_attention.flatten()
+                    idx = neighbor_pos if neighbor_pos < len(flat_attention) else 0
+                    score = flat_attention[idx]
+                
+                center_cells.append(center_cell_id)
+                neighbor_cells.append(neighbor_cell_id)
+                attention_scores.append(float(score))
+                neighbor_positions.append(neighbor_pos)
+    
+    print(f"Processed {len(set(center_cells))} center cells with {len(attention_scores)} total attention scores")
+    
+    # Create DataFrame in long format
+    communication_df = pd.DataFrame({
+        'center_cell': center_cells,
+        'neighbor_cell': neighbor_cells,
+        'attention_score': attention_scores,
+        'neighbor_position': neighbor_positions
+    })
+    
+    # Add useful metrics
+    communication_df['is_self_attention'] = communication_df['center_cell'] == communication_df['neighbor_cell']
+    
+    # Add summary statistics per center cell
+    center_stats = communication_df.groupby('center_cell').agg({
+        'attention_score': ['count', 'sum', 'mean', 'std'],
+        'neighbor_cell': 'nunique'
+    }).round(4)
+    
+    center_stats.columns = ['n_neighbors', 'total_attention', 'mean_attention', 'std_attention', 'unique_neighbors']
+    
+    print(f"Communication DataFrame shape: {communication_df.shape}")
+    print(f"Center cell statistics shape: {center_stats.shape}")
+    
+    if len(communication_df) == 0:
+        print("Warning: No communication scores computed!")
+        return pd.DataFrame(), pd.DataFrame()
+    
+    return communication_df, center_stats
 
 def apply_lr_prior(expression_df, lr_filepath, tf_filepath, disable_lr_masking=False):
     """
@@ -417,13 +489,26 @@ def train_model(
     
     # Record communication patterns - works with GATGraphClassifier in both modes
     # Communication patterns are available whether LR masking is enabled or disabled
-    first_attention_dict = get_cell_communication_scores(model, total_loader, node_id_list, filtered_original_node_ids, device)
+    communication_df, center_stats = get_cell_communication_scores(model, total_loader, node_id_list, filtered_original_node_ids, device)
 
-    # Save communication patterns
-    pickle_output_file = f"{os.path.dirname(model_path)}/communication_scores_{dataset_name}.pkl"
-    with open(pickle_output_file, 'wb') as f:
-        pickle.dump(first_attention_dict, f)
-    print(f"Communication patterns saved to {os.path.dirname(model_path)}")
+    # Save communication patterns as both pickle and CSV for flexibility
+    if len(communication_df) > 0 and len(center_stats) > 0:
+        comm_base_path = f"{os.path.dirname(model_path)}/communication_scores_{dataset_name}"
+        stats_base_path = f"{os.path.dirname(model_path)}/center_cell_stats_{dataset_name}"
+        
+        # Save detailed communication patterns
+        communication_df.to_pickle(f"{comm_base_path}.pkl")
+        communication_df.to_csv(f"{comm_base_path}.csv", index=False)
+        
+        # Save center cell statistics
+        center_stats.to_pickle(f"{stats_base_path}.pkl")
+        center_stats.to_csv(f"{stats_base_path}.csv")
+        
+        print(f"Communication patterns saved to {os.path.dirname(model_path)}")
+        print(f"  - Detailed scores: {comm_base_path}.[pkl|csv]")
+        print(f"  - Summary stats: {stats_base_path}.[pkl|csv]")
+    else:
+        print("Warning: No communication patterns computed!")
     
     # Save features information
     if not disable_lr_masking:
