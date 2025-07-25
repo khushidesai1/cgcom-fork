@@ -396,6 +396,8 @@ def train_model(
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=10)
 
     # Training loop
+    training_loss = []
+    validation_loss = []
     for epoch in range(exp_params['num_epochs']):
         # Training phase
         model.train()
@@ -431,7 +433,7 @@ def train_model(
             train_precision, train_recall, train_f1, _ = precision_recall_fscore_support(
                 train_labels, train_preds, average='weighted', zero_division=0
             )
-            
+            training_loss.append(train_loss)
             # Validation set evaluation
             val_total_loss = 0
             val_preds = []
@@ -450,7 +452,7 @@ def train_model(
             val_precision, val_recall, val_f1, _ = precision_recall_fscore_support(
                 val_labels, val_preds, average='weighted', zero_division=0
             )
-            
+            validation_loss.append(validate_loss)
             # Test set evaluation
             test_total_loss = 0
             test_preds = []
@@ -528,4 +530,4 @@ def train_model(
     print(f"Communication patterns and additional outputs saved to {os.path.dirname(model_path)}")
     print(f"LR masking was {'DISABLED' if disable_lr_masking else 'ENABLED'}")
     
-    return model, model_path
+    return model, model_path, training_loss, validation_loss
