@@ -14,6 +14,7 @@ from cgcom.utils import (
     generate_sub_dictionary,
     pick_random_common_elements,
     load_transcription_factors,
+    get_model_params,
 )
 from torch_geometric.data import DataLoader
 from torch.optim import Adam
@@ -370,26 +371,30 @@ def train_model(
         ligand_channel = len(ligands)
         receptor_channel = len(receptors)
         TF_channel = len(selected_tfs)
-    
-    model_params['num_classes'] = num_classes
-    model_params['device'] = device
-    model_params['ligand_channel'] = ligand_channel
-    model_params['receptor_channel'] = receptor_channel
-    model_params['TF_channel'] = TF_channel
-    model_params['mask_indexes'] = mask_indexes
-    model_params['disable_lr_masking'] = disable_lr_masking
 
+    model_params = get_model_params(
+        fc_hidden_channels_2=model_params['fc_hidden_channels_2'],
+        fc_hidden_channels_3=model_params['fc_hidden_channels_3'],
+        fc_hidden_channels_4=model_params['fc_hidden_channels_4'],
+        num_classes=model_params['num_classes'],
+        device=model_params['device'],
+        ligand_channel=model_params['ligand_channel'],
+        receptor_channel=model_params['receptor_channel'],
+        TF_channel=model_params['TF_channel'],
+        mask_indexes=model_params['mask_indexes'],
+        disable_lr_masking=model_params['disable_lr_masking']
+    )
     model = GATGraphClassifier(
         FChidden_channels_2=model_params['fc_hidden_channels_2'],
         FChidden_channels_3=model_params['fc_hidden_channels_3'],
         FChidden_channels_4=model_params['fc_hidden_channels_4'],
-        num_classes=num_classes,
-        device=device,
-        ligand_channel=ligand_channel,
-        receptor_channel=receptor_channel,
-        TF_channel=TF_channel,
-        mask_indexes=mask_indexes,
-        disable_lr_masking=disable_lr_masking
+        num_classes=model_params['num_classes'],
+        device=model_params['device'],
+        ligand_channel=model_params['ligand_channel'],
+        receptor_channel=model_params['receptor_channel'],
+        TF_channel=model_params['TF_channel'],
+        mask_indexes=model_params['mask_indexes'],
+        disable_lr_masking=model_params['disable_lr_masking']
     ).to(device)
 
     optimizer = Adam(model.parameters(), lr=exp_params['lr'])
@@ -482,7 +487,7 @@ def train_model(
         model_path = f"saved_models/cgcom_{dataset_name}_{exp_params['neighbor_threshold_ratio']}.pt"
     
     os.makedirs(os.path.dirname(model_path), exist_ok=True)
-    torch.save(model, model_path)
+    torch.save(model.state_dict(), model_path)
 
     # Save model parameters
     model_params_path = f"{os.path.dirname(model_path)}/cgcom_model_params.pkl"
