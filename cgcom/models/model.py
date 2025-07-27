@@ -115,7 +115,17 @@ class GATGraphClassifier(nn.Module):
         self.disable_lr_masking = disable_lr_masking
 
     def forward(self, x, edge_index, batch):
+        # Ensure input tensors are on the correct device
+        device = next(self.parameters()).device
+        x = x.to(device)
+        edge_index = edge_index.to(device)
+        batch = batch.to(device)
+        
         x1, communication, attention_coefficients, V = self.gat_conv(x, edge_index, batch)
+        
+        # Ensure x1 and batch are on the same device before indexing
+        x1 = x1.to(device)
+        batch = batch.to(device)
         x1 = torch.stack([x1[batch == i][0] for i in range(batch.max() + 1)])
         x1 = self.communicationFC1(x1)
         x1 = self.dropout(x1)
@@ -123,6 +133,9 @@ class GATGraphClassifier(nn.Module):
         x1 = self.dropout(x1)
         
         # Extract center node features for direct pathway
+        # Ensure x and batch are on the same device before indexing
+        x = x.to(device)
+        batch = batch.to(device)
         x2_input = torch.stack([x[batch == i][0] for i in range(batch.max() + 1)])
         
         x2 = self.fc1(x2_input)
