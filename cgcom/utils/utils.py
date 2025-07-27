@@ -193,14 +193,14 @@ def get_exp_params(lr=0.01, num_epochs=100, batch_size=128, train_ratio=0.9, val
     return hyperparameters
 
 def get_model_params(
-    fc_hidden_channels_2=1083, 
+    fc_hidden_channels_2=500, 
     fc_hidden_channels_3=512, 
     fc_hidden_channels_4=64, 
     num_classes=10, 
     device="cpu", 
-    ligand_channel=1083, 
-    receptor_channel=1083, 
-    TF_channel=1083, 
+    ligand_channel=500, 
+    receptor_channel=500, 
+    TF_channel=500, 
     mask_indexes=None, 
     disable_lr_masking=True
 ):
