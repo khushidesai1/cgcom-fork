@@ -202,7 +202,7 @@ def get_model_params(
     receptor_channel=1083, 
     TF_channel=1083, 
     mask_indexes=None, 
-    disable_lr_masking=False
+    disable_lr_masking=True
 ):
     model_params = {
         "fc_hidden_channels_2": fc_hidden_channels_2,

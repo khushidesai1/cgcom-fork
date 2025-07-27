@@ -373,18 +373,7 @@ def train_model(
         TF_channel = len(selected_tfs)
 
     # Use the computed values, not the original model_params
-    updated_model_params = get_model_params(
-        fc_hidden_channels_2=model_params['fc_hidden_channels_2'],
-        fc_hidden_channels_3=model_params['fc_hidden_channels_3'],
-        fc_hidden_channels_4=model_params['fc_hidden_channels_4'],
-        num_classes=model_params['num_classes'],
-        device=model_params['device'],
-        ligand_channel=ligand_channel,  # Use computed value
-        receptor_channel=receptor_channel,  # Use computed value
-        TF_channel=TF_channel,  # Use computed value
-        mask_indexes=mask_indexes,  # Use computed value
-        disable_lr_masking=disable_lr_masking  # Use the actual parameter value
-    )
+    updated_model_params = get_model_params()
     model = GATGraphClassifier(
         FChidden_channels_2=updated_model_params['fc_hidden_channels_2'],
         FChidden_channels_3=updated_model_params['fc_hidden_channels_3'],
