@@ -47,6 +47,11 @@ class CustomGATConv(nn.Module):
         nn.init.xavier_uniform_(self.W_key)
         
     def forward(self, x, edge_index, batch):
+        # Ensure input tensors are on the correct device
+        x = x.to(next(self.parameters()).device)
+        edge_index = edge_index.to(next(self.parameters()).device)
+        batch = batch.to(next(self.parameters()).device)
+        
         # Apply initial weight masking on first forward pass when tensors are on same device
         if not self._weights_initialized.item():
             with torch.no_grad():
@@ -63,7 +68,7 @@ class CustomGATConv(nn.Module):
         
         # Apply mask to weights (ensure both are on same device)
         maskedweight = self.W_key * (self.mask.T)
-        maskedweight = maskedweight.T.to(self.device)
+        maskedweight = maskedweight.T
         
         # Compute Key, Query, Value
         K = F.linear(P1, maskedweight)
