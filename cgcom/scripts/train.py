@@ -372,29 +372,30 @@ def train_model(
         receptor_channel = len(receptors)
         TF_channel = len(selected_tfs)
 
-    model_params = get_model_params(
+    # Use the computed values, not the original model_params
+    updated_model_params = get_model_params(
         fc_hidden_channels_2=model_params['fc_hidden_channels_2'],
         fc_hidden_channels_3=model_params['fc_hidden_channels_3'],
         fc_hidden_channels_4=model_params['fc_hidden_channels_4'],
         num_classes=model_params['num_classes'],
         device=model_params['device'],
-        ligand_channel=model_params['ligand_channel'],
-        receptor_channel=model_params['receptor_channel'],
-        TF_channel=model_params['TF_channel'],
-        mask_indexes=model_params['mask_indexes'],
-        disable_lr_masking=model_params['disable_lr_masking']
+        ligand_channel=ligand_channel,  # Use computed value
+        receptor_channel=receptor_channel,  # Use computed value
+        TF_channel=TF_channel,  # Use computed value
+        mask_indexes=mask_indexes,  # Use computed value
+        disable_lr_masking=disable_lr_masking  # Use the actual parameter value
     )
     model = GATGraphClassifier(
-        FChidden_channels_2=model_params['fc_hidden_channels_2'],
-        FChidden_channels_3=model_params['fc_hidden_channels_3'],
-        FChidden_channels_4=model_params['fc_hidden_channels_4'],
-        num_classes=model_params['num_classes'],
-        device=model_params['device'],
-        ligand_channel=model_params['ligand_channel'],
-        receptor_channel=model_params['receptor_channel'],
-        TF_channel=model_params['TF_channel'],
-        mask_indexes=model_params['mask_indexes'],
-        disable_lr_masking=model_params['disable_lr_masking']
+        FChidden_channels_2=updated_model_params['fc_hidden_channels_2'],
+        FChidden_channels_3=updated_model_params['fc_hidden_channels_3'],
+        FChidden_channels_4=updated_model_params['fc_hidden_channels_4'],
+        num_classes=updated_model_params['num_classes'],
+        device=updated_model_params['device'],
+        ligand_channel=updated_model_params['ligand_channel'],
+        receptor_channel=updated_model_params['receptor_channel'],
+        TF_channel=updated_model_params['TF_channel'],
+        mask_indexes=updated_model_params['mask_indexes'],
+        disable_lr_masking=updated_model_params['disable_lr_masking']
     ).to(device)
 
     optimizer = Adam(model.parameters(), lr=exp_params['lr'])
@@ -409,6 +410,9 @@ def train_model(
         train_total_loss = 0
         for data in train_loader:
             data = data.to(device)
+            data.x = data.x.to(device)
+            data.edge_index = data.edge_index.to(device)
+            data.batch = data.batch.to(device)
             optimizer.zero_grad()
             out, _1, _2, _3 = model(data.x, data.edge_index, data.batch)
             loss = F.cross_entropy(out, data.y)
@@ -492,7 +496,7 @@ def train_model(
     # Save model parameters
     model_params_path = f"{os.path.dirname(model_path)}/cgcom_model_params.pkl"
     with open(model_params_path, 'wb') as f:
-        pickle.dump(model_params, f)
+        pickle.dump(updated_model_params, f)
     
     # Record communication patterns - works with GATGraphClassifier in both modes
     # Communication patterns are available whether LR masking is enabled or disabled

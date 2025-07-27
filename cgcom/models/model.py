@@ -15,19 +15,25 @@ class CustomGATConv(nn.Module):
         # Trainable weight matrices
         self.W_query = nn.Linear(p2_channels, p2_channels)
         self.W_value = nn.Linear(p2_channels, p2_channels)
-        # Initialize W_key with trainable and non-trainable parts
-        self.W_key = nn.Parameter(torch.Tensor(p1_channels, p2_channels)).to(device)
+        # Initialize W_key with proper device placement
+        self.W_key = nn.Parameter(torch.Tensor(p1_channels, p2_channels))
         
-        # Create mask
-        self.mask = torch.Tensor(p2_channels, p1_channels).fill_(0).to(device)
+        # Create mask and register as buffer so it moves with the model
+        mask = torch.zeros(p2_channels, p1_channels)
         
         if disable_lr_masking:
             # Allow all connections - set mask to all ones
-            self.mask.fill_(1)
+            mask.fill_(1)
         else:
             # Use LR pairs only
             for mask_index in mask_indexes:
-                self.mask[mask_index[0], mask_index[1]] = 1
+                mask[mask_index[0], mask_index[1]] = 1
+        
+        # Register mask as a buffer so it automatically moves with the model
+        self.register_buffer('mask', mask)
+        
+        # Register initialization flag as buffer so it persists across device moves
+        self.register_buffer('_weights_initialized', torch.tensor(False))
         
         print(f"W_key shape: {self.W_key.shape}")
         print(f"Mask shape: {self.mask.shape}")
@@ -39,9 +45,14 @@ class CustomGATConv(nn.Module):
         nn.init.xavier_uniform_(self.W_query.weight)
         nn.init.xavier_uniform_(self.W_value.weight)
         nn.init.xavier_uniform_(self.W_key)
-        self.W_key.data *= (self.mask.T)
-
+        
     def forward(self, x, edge_index, batch):
+        # Apply initial weight masking on first forward pass when tensors are on same device
+        if not self._weights_initialized.item():
+            with torch.no_grad():
+                self.W_key.data *= (self.mask.T)
+                self._weights_initialized.fill_(True)
+            
         if self.disable_lr_masking:
             # Both P1 and P2 use the full gene set (same input)
             P1 = x[:, :self.p1_channels]  # Full genes
@@ -50,6 +61,7 @@ class CustomGATConv(nn.Module):
             # Original LR splitting
             P1, P2 = x[:, :self.p1_channels], x[:, self.p1_channels:self.p1_channels+self.p2_channels]
         
+        # Apply mask to weights (ensure both are on same device)
         maskedweight = self.W_key * (self.mask.T)
         maskedweight = maskedweight.T
         
