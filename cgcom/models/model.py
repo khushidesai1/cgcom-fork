@@ -99,9 +99,9 @@ class GATGraphClassifier(nn.Module):
         
         # Adjust input size for fc1 based on whether LR masking is disabled
         if disable_lr_masking:
-            # When disabled, we use full genes for both ligand and receptor channels
-            # so total input is ligand_channel + TF_channel (no separate receptor channel)
-            fc1_input_size = ligand_channel + TF_channel
+            # When disabled, we use full genes, so input size equals ligand_channel
+            # (which should be the total number of genes when LR masking is disabled)
+            fc1_input_size = ligand_channel
         else:
             # Original: ligand + receptor + TF channels
             fc1_input_size = ligand_channel + receptor_channel + TF_channel
