@@ -63,7 +63,7 @@ class CustomGATConv(nn.Module):
         
         # Apply mask to weights (ensure both are on same device)
         maskedweight = self.W_key * (self.mask.T)
-        maskedweight = maskedweight.T
+        maskedweight = maskedweight.T.to(self.device)
         
         # Compute Key, Query, Value
         K = F.linear(P1, maskedweight)
