@@ -254,7 +254,7 @@ def generate_subgraph_features(G, node_id_list, cell_label_dict, expression_df):
 
     return filtered_features, filtered_edges, filtered_labels, filtered_original_node_ids
 
-def build_dataloaders(filtered_edges, filtered_features, filtered_labels, exp_params):
+def build_dataloaders(filtered_edges, filtered_features, filtered_labels, exp_params, predefined_split=None):
     """
     Build dataloaders for training, validation, and test sets.
     Args:
@@ -262,6 +262,8 @@ def build_dataloaders(filtered_edges, filtered_features, filtered_labels, exp_pa
         filtered_features (list): List of features.
         filtered_labels (list): List of labels.
         exp_params (dict): Dictionary containing training hyperparameters.
+        predefined_split (dict, optional): Dict with keys 'train_idx', 'val_idx', 'test_idx'
+            containing lists of subgraph indices. If provided, skips the random split.
     Returns:
         train_loader (DataLoader): DataLoader for training set.
         validate_loader (DataLoader): DataLoader for validation set.
@@ -270,32 +272,37 @@ def build_dataloaders(filtered_edges, filtered_features, filtered_labels, exp_pa
         num_classes (int): Number of classes.
     """
     dataset, num_classes = generate_graph(filtered_edges, filtered_features, filtered_labels)
-    
-    # Calculate split sizes
-    train_size = int(exp_params['train_ratio'] * len(dataset))
-    valid_size = int(exp_params['val_ratio'] * len(dataset))
-    test_size = len(dataset) - train_size - valid_size
-    
-    # Split dataset
-    train_idx, temp_idx, _, temp_labels = train_test_split(
-        range(len(dataset)),
-        filtered_labels,
-        stratify=filtered_labels,
-        test_size=valid_size + test_size,
-        random_state=42
-    )
-    
-    valid_idx, test_idx = train_test_split(
-        temp_idx,
-        stratify=[filtered_labels[i] for i in temp_idx],
-        test_size=test_size,
-        random_state=42
-    )
-    
+
+    if predefined_split is not None:
+        train_idx = predefined_split["train_idx"]
+        valid_idx = predefined_split["val_idx"]
+        test_idx = predefined_split["test_idx"]
+    else:
+        # Calculate split sizes
+        train_size = int(exp_params['train_ratio'] * len(dataset))
+        valid_size = int(exp_params['val_ratio'] * len(dataset))
+        test_size = len(dataset) - train_size - valid_size
+
+        # Split dataset
+        train_idx, temp_idx, _, temp_labels = train_test_split(
+            range(len(dataset)),
+            filtered_labels,
+            stratify=filtered_labels,
+            test_size=valid_size + test_size,
+            random_state=42
+        )
+
+        valid_idx, test_idx = train_test_split(
+            temp_idx,
+            stratify=[filtered_labels[i] for i in temp_idx],
+            test_size=test_size,
+            random_state=42
+        )
+
     train_dataset = [dataset[i] for i in train_idx]
     valid_dataset = [dataset[i] for i in valid_idx]
     test_dataset = [dataset[i] for i in test_idx]
-    
+
     train_loader = DataLoader(train_dataset, batch_size=exp_params['batch_size'], shuffle=True)
     validate_loader = DataLoader(valid_dataset, batch_size=exp_params['batch_size'], shuffle=True)
     test_loader = DataLoader(test_dataset, batch_size=exp_params['batch_size'], shuffle=False)
@@ -312,7 +319,8 @@ def train_model(
     tf_filepath="./data/TFlist.txt",
     dataset_name="default",
     labels_key="cell_type",
-    disable_lr_masking=False
+    disable_lr_masking=False,
+    train_obs_names=None,
 ):
     """
     Train the CGCom model.
@@ -327,6 +335,10 @@ def train_model(
         dataset_name (str): Name of the dataset.
         labels_key (str): Key for cell type labels in anndata.
         disable_lr_masking (bool): If True, disable LR biological prior and use full gene set.
+        train_obs_names (list, optional): Cell names (from adata.obs_names) that belong to the
+            training set. Cells not in this list are assigned to the test set. The validation set
+            is carved out from the training pool using exp_params['val_ratio']. If None, a random
+            stratified split is used instead.
     """
     torch.cuda.empty_cache()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -347,6 +359,30 @@ def train_model(
     
     filtered_features, filtered_edges, filtered_labels, filtered_original_node_ids = generate_subgraph_features(G, node_id_list, cell_label_dict, expression_df)
 
+    # Build predefined split from train_obs_names if provided
+    if train_obs_names is not None:
+        train_obs_set = set(train_obs_names)
+        train_pool = [
+            i for i, node_list in enumerate(filtered_original_node_ids)
+            if node_id_list[node_list[0]] in train_obs_set
+        ]
+        test_idx = [
+            i for i, node_list in enumerate(filtered_original_node_ids)
+            if node_id_list[node_list[0]] not in train_obs_set
+        ]
+        train_pool_labels = [filtered_labels[i] for i in train_pool]
+        val_frac = exp_params['val_ratio'] / (exp_params['train_ratio'] + exp_params['val_ratio'])
+        train_idx, val_idx = train_test_split(
+            train_pool,
+            stratify=train_pool_labels,
+            test_size=val_frac,
+            random_state=42,
+        )
+        predefined_split = {"train_idx": train_idx, "val_idx": val_idx, "test_idx": test_idx}
+        print(f"Using predefined split: {len(train_idx)} train, {len(val_idx)} val, {len(test_idx)} test")
+    else:
+        predefined_split = None
+
     # Log dataset statistics
     print(f"Expression dataframe shape: {expression_df.shape}")
     print(f"Number of graphs: {len(filtered_features)}") 
@@ -355,7 +391,7 @@ def train_model(
     print(f"Train ratio: {exp_params['train_ratio']}")
     print(f"Validation ratio: {exp_params['val_ratio']}")
     
-    train_loader, validate_loader, test_loader, total_loader, num_classes = build_dataloaders(filtered_edges, filtered_features, filtered_labels, exp_params)
+    train_loader, validate_loader, test_loader, total_loader, num_classes = build_dataloaders(filtered_edges, filtered_features, filtered_labels, exp_params, predefined_split=predefined_split)
     
     # Initialize the model
     input_channels = expression_df.shape[1]  # Number of genes
