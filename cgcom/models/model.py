@@ -78,9 +78,25 @@ class CustomGATConv(nn.Module):
         # The communication tensor [N_nodes, p2_channels, p1_channels] is only needed
         # for post-hoc analysis (eval mode). Skip it during training to save memory.
         if not self.training:
-            manual_output = P1.unsqueeze(1) * maskedweight.unsqueeze(0)
-            Q_expanded = Q.unsqueeze(-1)
-            communication = manual_output * Q_expanded
+            # Compute chunked over p2_channels to avoid materialising the full
+            # [N, p2, p1] tensor on GPU (which can be ~14 GiB with ~20 K genes).
+            # Each chunk is [N, chunk_size, p1] — small enough to fit in GPU VRAM —
+            # and is immediately moved to CPU so only one chunk lives on GPU at a time.
+            # The final tensor is assembled on CPU, where RAM is plentiful.
+            chunk_size = 256
+            p2 = maskedweight.shape[0]
+            chunks = []
+            for j_start in range(0, p2, chunk_size):
+                j_end = min(j_start + chunk_size, p2)
+                mw_chunk = maskedweight[j_start:j_end]   # [chunk, p1]
+                Q_chunk = Q[:, j_start:j_end]             # [N, chunk]
+                # [N, 1, p1] * [1, chunk, p1] * [N, chunk, 1] → [N, chunk, p1]
+                c_chunk = (P1.unsqueeze(1)
+                           * mw_chunk.unsqueeze(0)
+                           * Q_chunk.unsqueeze(-1))
+                chunks.append(c_chunk.cpu())
+                del c_chunk
+            communication = torch.cat(chunks, dim=1)  # [N, p2, p1] on CPU
         else:
             communication = None
         

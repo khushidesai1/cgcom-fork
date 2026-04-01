@@ -69,9 +69,11 @@ def get_cell_communication_scores(model, total_loader, node_id_list, filtered_or
             data = data.to(device)
             out, communication, attention_coefficients, V = model(data.x, data.edge_index, data.batch)
             
-            # Get the first V (center cell features)
-            first_v = V[0]
-            
+            # Get the first V (center cell features).
+            # communication lives on CPU (chunked off-GPU computation), so bring
+            # first_v to CPU as well before multiplying.
+            first_v = V[0].cpu()
+
             # Compute attention scores for this subgraph
             result = communication * first_v.unsqueeze(0).unsqueeze(-1)
             result = result - result.max()
