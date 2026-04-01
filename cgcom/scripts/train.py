@@ -1,5 +1,6 @@
 import os
 import torch
+import torch.nn as nn
 import pickle
 import numpy as np
 from cgcom.utils import (
@@ -17,6 +18,8 @@ from cgcom.utils import (
     get_model_params,
 )
 from torch_geometric.data import DataLoader
+from torch_geometric.data import DataListLoader
+from torch_geometric.nn import DataParallel as PyGDataParallel
 from torch.optim import Adam
 import torch.nn.functional as F
 import scanpy as sc
@@ -27,6 +30,16 @@ from sklearn.metrics import precision_recall_fscore_support
 from sklearn.preprocessing import MinMaxScaler
 from cgcom.models import GATGraphClassifier
 from collections import Counter
+
+
+class _DataAdapterModel(nn.Module):
+    """Wraps GATGraphClassifier so PyGDataParallel can call forward(data) per GPU."""
+    def __init__(self, inner_model):
+        super().__init__()
+        self.inner = inner_model
+
+    def forward(self, data):
+        return self.inner(data.x, data.edge_index, data.batch)
 
 def get_cell_communication_scores(model, total_loader, node_id_list, filtered_original_node_ids, device):
     """
@@ -254,7 +267,7 @@ def generate_subgraph_features(G, node_id_list, cell_label_dict, expression_df):
 
     return filtered_features, filtered_edges, filtered_labels, filtered_original_node_ids
 
-def build_dataloaders(filtered_edges, filtered_features, filtered_labels, exp_params, predefined_split=None):
+def build_dataloaders(filtered_edges, filtered_features, filtered_labels, exp_params, predefined_split=None, multi_gpu=False):
     """
     Build dataloaders for training, validation, and test sets.
     Args:
@@ -264,11 +277,12 @@ def build_dataloaders(filtered_edges, filtered_features, filtered_labels, exp_pa
         exp_params (dict): Dictionary containing training hyperparameters.
         predefined_split (dict, optional): Dict with keys 'train_idx', 'val_idx', 'test_idx'
             containing lists of subgraph indices. If provided, skips the random split.
+        multi_gpu (bool): If True, use DataListLoader (required for PyGDataParallel).
     Returns:
-        train_loader (DataLoader): DataLoader for training set.
-        validate_loader (DataLoader): DataLoader for validation set.
-        test_loader (DataLoader): DataLoader for test set.
-        total_loader (DataLoader): DataLoader for total set.
+        train_loader: DataLoader (or DataListLoader) for training set.
+        validate_loader: DataLoader (or DataListLoader) for validation set.
+        test_loader: DataLoader (or DataListLoader) for test set.
+        total_loader (DataLoader): Single-GPU DataLoader for communication scoring (always batch_size=1).
         num_classes (int): Number of classes.
     """
     dataset, num_classes = generate_graph(filtered_edges, filtered_features, filtered_labels)
@@ -303,10 +317,19 @@ def build_dataloaders(filtered_edges, filtered_features, filtered_labels, exp_pa
     valid_dataset = [dataset[i] for i in valid_idx]
     test_dataset = [dataset[i] for i in test_idx]
 
-    train_loader = DataLoader(train_dataset, batch_size=exp_params['batch_size'], shuffle=True)
-    validate_loader = DataLoader(valid_dataset, batch_size=exp_params['batch_size'], shuffle=True)
-    test_loader = DataLoader(test_dataset, batch_size=exp_params['batch_size'], shuffle=False)
+    # total_loader is always single-GPU (batch_size=1) for communication scoring
     total_loader = DataLoader(dataset, batch_size=1, shuffle=False)
+
+    if multi_gpu:
+        # DataListLoader passes a list of Data objects per batch, which PyGDataParallel
+        # distributes across GPUs and batches independently per device.
+        train_loader = DataListLoader(train_dataset, batch_size=exp_params['batch_size'], shuffle=True)
+        validate_loader = DataListLoader(valid_dataset, batch_size=exp_params['batch_size'], shuffle=True)
+        test_loader = DataListLoader(test_dataset, batch_size=exp_params['batch_size'], shuffle=False)
+    else:
+        train_loader = DataLoader(train_dataset, batch_size=exp_params['batch_size'], shuffle=True)
+        validate_loader = DataLoader(valid_dataset, batch_size=exp_params['batch_size'], shuffle=True)
+        test_loader = DataLoader(test_dataset, batch_size=exp_params['batch_size'], shuffle=False)
 
     return train_loader, validate_loader, test_loader, total_loader, num_classes
 
@@ -342,6 +365,10 @@ def train_model(
     """
     torch.cuda.empty_cache()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    num_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
+    multi_gpu = num_gpus > 1
+    if multi_gpu:
+        print(f"Multi-GPU training enabled: using {num_gpus} GPUs")
 
     # Load dataset
     adata = sc.read_h5ad(dataset_path)
@@ -391,7 +418,7 @@ def train_model(
     print(f"Train ratio: {exp_params['train_ratio']}")
     print(f"Validation ratio: {exp_params['val_ratio']}")
     
-    train_loader, validate_loader, test_loader, total_loader, num_classes = build_dataloaders(filtered_edges, filtered_features, filtered_labels, exp_params, predefined_split=predefined_split)
+    train_loader, validate_loader, test_loader, total_loader, num_classes = build_dataloaders(filtered_edges, filtered_features, filtered_labels, exp_params, predefined_split=predefined_split, multi_gpu=multi_gpu)
     
     # Initialize the model
     input_channels = expression_df.shape[1]  # Number of genes
@@ -423,45 +450,67 @@ def train_model(
         disable_lr_masking=updated_model_params['disable_lr_masking']
     ).to(device)
 
+    # Wrap with PyGDataParallel when multiple GPUs are available.
+    # PyGDataParallel (unlike torch.nn.DataParallel) understands PyG's graph-batched
+    # tensors and works with DataListLoader to distribute whole graphs across devices.
+    if multi_gpu:
+        train_model_obj = PyGDataParallel(_DataAdapterModel(model))
+        eval_model_obj = train_model_obj
+    else:
+        train_model_obj = model
+        eval_model_obj = model
+
     optimizer = Adam(model.parameters(), lr=exp_params['lr'])
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=10)
+
+    def _forward(model_obj, data):
+        """Unified forward for single-GPU (Data) and multi-GPU (list of Data) modes."""
+        if multi_gpu:
+            # data is a list of Data objects from DataListLoader
+            out, _1, _2, _3 = model_obj(data)
+        else:
+            data = data.to(device)
+            out, _1, _2, _3 = model_obj(data.x, data.edge_index, data.batch)
+        return out
+
+    def _get_labels(data):
+        if multi_gpu:
+            return torch.cat([d.y for d in data]).to(device)
+        return data.y.to(device)
 
     # Training loop
     training_loss = []
     validation_loss = []
     for epoch in range(exp_params['num_epochs']):
         # Training phase
-        model.train()
+        train_model_obj.train()
         train_total_loss = 0
         for data in train_loader:
-            data = data.to(device)
-            data.x = data.x.to(device)
-            data.edge_index = data.edge_index.to(device)
-            data.batch = data.batch.to(device)
             optimizer.zero_grad()
-            out, _1, _2, _3 = model(data.x, data.edge_index, data.batch)
-            loss = F.cross_entropy(out, data.y)
+            out = _forward(train_model_obj, data)
+            labels = _get_labels(data)
+            loss = F.cross_entropy(out, labels)
             loss.backward()
             optimizer.step()
             train_total_loss += loss.item()
         train_loss = train_total_loss / len(train_loader)
-        
+
         # Evaluation phase for all datasets
-        model.eval()
+        eval_model_obj.eval()
         with torch.no_grad():
             # Train set evaluation
             train_total_loss = 0
             train_preds = []
             train_labels = []
             for data in train_loader:
-                data = data.to(device)
-                out, _1, _2, _3 = model(data.x, data.edge_index, data.batch)
-                loss = F.cross_entropy(out, data.y)
+                out = _forward(eval_model_obj, data)
+                labels = _get_labels(data)
+                loss = F.cross_entropy(out, labels)
                 train_total_loss += loss.item()
                 preds = out.argmax(dim=1)
                 train_preds.extend(preds.cpu().numpy())
-                train_labels.extend(data.y.cpu().numpy())
-            
+                train_labels.extend(labels.cpu().numpy())
+
             train_loss = train_total_loss / len(train_loader.dataset)
             train_acc = sum(p == l for p, l in zip(train_preds, train_labels)) / len(train_labels)
             train_precision, train_recall, train_f1, _ = precision_recall_fscore_support(
@@ -473,14 +522,14 @@ def train_model(
             val_preds = []
             val_labels = []
             for data in validate_loader:
-                data = data.to(device)
-                out, _1, _2, _3 = model(data.x, data.edge_index, data.batch)
-                loss = F.cross_entropy(out, data.y)
+                out = _forward(eval_model_obj, data)
+                labels = _get_labels(data)
+                loss = F.cross_entropy(out, labels)
                 val_total_loss += loss.item()
                 preds = out.argmax(dim=1)
                 val_preds.extend(preds.cpu().numpy())
-                val_labels.extend(data.y.cpu().numpy())
-            
+                val_labels.extend(labels.cpu().numpy())
+
             validate_loss = val_total_loss / len(validate_loader.dataset)
             validate_acc = sum(p == l for p, l in zip(val_preds, val_labels)) / len(val_labels)
             val_precision, val_recall, val_f1, _ = precision_recall_fscore_support(
@@ -492,23 +541,23 @@ def train_model(
             test_preds = []
             test_labels = []
             for data in test_loader:
-                data = data.to(device)
-                out, _1, _2, _3 = model(data.x, data.edge_index, data.batch)
-                loss = F.cross_entropy(out, data.y)
+                out = _forward(eval_model_obj, data)
+                labels = _get_labels(data)
+                loss = F.cross_entropy(out, labels)
                 test_total_loss += loss.item()
                 preds = out.argmax(dim=1)
                 test_preds.extend(preds.cpu().numpy())
-                test_labels.extend(data.y.cpu().numpy())
-            
+                test_labels.extend(labels.cpu().numpy())
+
             test_loss = test_total_loss / len(test_loader.dataset)
             test_acc = sum(p == l for p, l in zip(test_preds, test_labels)) / len(test_labels)
             test_precision, test_recall, test_f1, _ = precision_recall_fscore_support(
                 test_labels, test_preds, average='weighted', zero_division=0
             )
-        
+
         scheduler.step(validate_loss)
         current_lr = optimizer.param_groups[0]['lr']
-        
+
         print(f'Epoch: {epoch+1}, Train Loss: {train_loss:.4f}, Validate Loss: {validate_loss:.4f}, Train Acc: {train_acc:.4f}, Validate Acc: {validate_acc:.4f}, Test Acc: {test_acc:.4f}, LR: {current_lr:.6f}')
     
     # Save model and results

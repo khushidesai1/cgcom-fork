@@ -72,13 +72,17 @@ class CustomGATConv(nn.Module):
         
         # Compute Key, Query, Value
         K = F.linear(P1, maskedweight)
-        manual_output = P1.unsqueeze(1) * maskedweight.unsqueeze(0)        
         Q = self.W_query(P2)
-        Q_expanded = Q.unsqueeze(-1)
-
-        # Perform element-wise multiplication
-        communication = manual_output * Q_expanded
         V = self.W_value(P2)
+
+        # The communication tensor [N_nodes, p2_channels, p1_channels] is only needed
+        # for post-hoc analysis (eval mode). Skip it during training to save memory.
+        if not self.training:
+            manual_output = P1.unsqueeze(1) * maskedweight.unsqueeze(0)
+            Q_expanded = Q.unsqueeze(-1)
+            communication = manual_output * Q_expanded
+        else:
+            communication = None
         
         # Querying
         alpha = Q * K 
