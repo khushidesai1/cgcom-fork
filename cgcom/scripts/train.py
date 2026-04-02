@@ -597,7 +597,7 @@ def train_model(
     # Communication patterns are available whether LR masking is enabled or disabled
     communication_df, center_stats = get_cell_communication_scores(
         model, total_loader, node_id_list, filtered_original_node_ids, device,
-        scoring_batch_size=scoring_batch_size,
+        scoring_batch_size=exp_params.get('scoring_batch_size', 32),
     )
 
     # Save communication patterns as both pickle and CSV for flexibility
