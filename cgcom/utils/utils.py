@@ -231,10 +231,24 @@ def get_cell_label_dict(adata, labels_key):
     """
     Get the cell label dictionary.
     """
-    cell_label_dict = {}
-    for cell_id, cell_label in zip(adata.obs_names, adata.obs[labels_key]):
-        cell_label_dict[cell_id] = int(cell_label)
-    return cell_label_dict
+    labels = pd.Series(adata.obs[labels_key], index=adata.obs_names)
+    if labels.isna().any():
+        raise ValueError(
+            f"Found {int(labels.isna().sum())} missing labels in adata.obs['{labels_key}']."
+        )
+
+    # Prefer direct numeric conversion when possible so existing integer-label
+    # workflows keep their original class IDs.
+    numeric_labels = pd.to_numeric(labels, errors="coerce")
+    if numeric_labels.notna().all():
+        encoded = numeric_labels.astype(int)
+    else:
+        # Fall back to deterministic encoding for string/categorical labels.
+        unique_labels = sorted(labels.astype(str).unique().tolist())
+        label_to_id = {label: idx for idx, label in enumerate(unique_labels)}
+        encoded = labels.astype(str).map(label_to_id).astype(int)
+
+    return {cell_id: int(cell_label) for cell_id, cell_label in encoded.items()}
 
 
 def get_cell_locations_df(adata):
