@@ -63,16 +63,19 @@ def get_cell_communication_scores(model, total_loader, node_id_list, filtered_or
     neighbor_positions = []
     
     print("Computing cell-to-neighbor attention scores...")
-    
+
+    # Free any reserved-but-unallocated GPU memory left over from training so the
+    # large float16 communication tensor (~7 GiB) has room to be allocated.
+    torch.cuda.empty_cache()
+
     with torch.no_grad():
         for data, node_lists in tqdm(zip(total_loader, filtered_original_node_ids), desc="Processing subgraphs"):
             data = data.to(device)
             out, communication, attention_coefficients, V = model(data.x, data.edge_index, data.batch)
-            
-            # Get the first V (center cell features).
-            # communication lives on CPU (chunked off-GPU computation), so bring
-            # first_v to CPU as well before multiplying.
-            first_v = V[0].cpu()
+
+            # communication is float16 on GPU; cast first_v to match so the
+            # multiplication stays on GPU without a dtype promotion to float32.
+            first_v = V[0].half()
 
             # Compute attention scores for this subgraph
             result = communication * first_v.unsqueeze(0).unsqueeze(-1)

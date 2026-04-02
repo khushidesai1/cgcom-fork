@@ -78,25 +78,28 @@ class CustomGATConv(nn.Module):
         # The communication tensor [N_nodes, p2_channels, p1_channels] is only needed
         # for post-hoc analysis (eval mode). Skip it during training to save memory.
         if not self.training:
-            # Compute chunked over p2_channels to avoid materialising the full
-            # [N, p2, p1] tensor on GPU (which can be ~14 GiB with ~20 K genes).
-            # Each chunk is [N, chunk_size, p1] — small enough to fit in GPU VRAM —
-            # and is immediately moved to CPU so only one chunk lives on GPU at a time.
-            # The final tensor is assembled on CPU, where RAM is plentiful.
+            # With ~20 K genes the full [N, p2, p1] tensor is ~14 GiB in float32.
+            # Strategy: pre-allocate once in float16 (~7 GiB) to stay on GPU, then
+            # fill it in-place in chunks of p2_channels so the only extra GPU
+            # allocation per step is [N, chunk_size, p1] (~100 MB), not a second
+            # full copy of the tensor.
+            device = P1.device
+            N = P1.shape[0]
+            p2, p1 = maskedweight.shape
             chunk_size = 256
-            p2 = maskedweight.shape[0]
-            chunks = []
+            communication = torch.empty(N, p2, p1, device=device, dtype=torch.float16)
+            P1_h = P1.half()
+            mw_h = maskedweight.half()
+            Q_h = Q.half()
             for j_start in range(0, p2, chunk_size):
                 j_end = min(j_start + chunk_size, p2)
-                mw_chunk = maskedweight[j_start:j_end]   # [chunk, p1]
-                Q_chunk = Q[:, j_start:j_end]             # [N, chunk]
                 # [N, 1, p1] * [1, chunk, p1] * [N, chunk, 1] → [N, chunk, p1]
-                c_chunk = (P1.unsqueeze(1)
-                           * mw_chunk.unsqueeze(0)
-                           * Q_chunk.unsqueeze(-1))
-                chunks.append(c_chunk.cpu())
-                del c_chunk
-            communication = torch.cat(chunks, dim=1)  # [N, p2, p1] on CPU
+                communication[:, j_start:j_end, :] = (
+                    P1_h.unsqueeze(1)
+                    * mw_h[j_start:j_end].unsqueeze(0)
+                    * Q_h[:, j_start:j_end].unsqueeze(-1)
+                )
+            del P1_h, mw_h, Q_h
         else:
             communication = None
         
