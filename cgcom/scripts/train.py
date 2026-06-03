@@ -321,6 +321,8 @@ def train_model(
     labels_key="cell_type",
     disable_lr_masking=False,
     train_obs_names=None,
+    val_obs_names=None,
+    test_obs_names=None,
 ):
     """
     Train the CGCom model.
@@ -339,6 +341,10 @@ def train_model(
             training set. Cells not in this list are assigned to the test set. The validation set
             is carved out from the training pool using exp_params['val_ratio']. If None, a random
             stratified split is used instead.
+        val_obs_names (list, optional): Cell names to use as the validation set. Requires
+            train_obs_names. If omitted, validation is carved from train_obs_names.
+        test_obs_names (list, optional): Cell names to use as the test set. Requires
+            train_obs_names. If omitted, all cells outside train_obs_names are used as test.
     """
     torch.cuda.empty_cache()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -359,25 +365,44 @@ def train_model(
     
     filtered_features, filtered_edges, filtered_labels, filtered_original_node_ids = generate_subgraph_features(G, node_id_list, cell_label_dict, expression_df)
 
-    # Build predefined split from train_obs_names if provided
+    # Build predefined split from observation names if provided. The graph and
+    # features are still built from the full AnnData object so held-out cells can
+    # contribute as neighbors, but only center cells in train_idx are optimized.
     if train_obs_names is not None:
         train_obs_set = set(train_obs_names)
+        val_obs_set = set(val_obs_names) if val_obs_names is not None else None
+        test_obs_set = set(test_obs_names) if test_obs_names is not None else None
+
         train_pool = [
             i for i, node_list in enumerate(filtered_original_node_ids)
             if node_id_list[node_list[0]] in train_obs_set
         ]
-        test_idx = [
-            i for i, node_list in enumerate(filtered_original_node_ids)
-            if node_id_list[node_list[0]] not in train_obs_set
-        ]
-        train_pool_labels = [filtered_labels[i] for i in train_pool]
-        val_frac = exp_params['val_ratio'] / (exp_params['train_ratio'] + exp_params['val_ratio'])
-        train_idx, val_idx = train_test_split(
-            train_pool,
-            stratify=train_pool_labels,
-            test_size=val_frac,
-            random_state=42,
-        )
+        if val_obs_set is not None:
+            train_idx = train_pool
+            val_idx = [
+                i for i, node_list in enumerate(filtered_original_node_ids)
+                if node_id_list[node_list[0]] in val_obs_set
+            ]
+        else:
+            train_pool_labels = [filtered_labels[i] for i in train_pool]
+            val_frac = exp_params['val_ratio'] / (exp_params['train_ratio'] + exp_params['val_ratio'])
+            train_idx, val_idx = train_test_split(
+                train_pool,
+                stratify=train_pool_labels,
+                test_size=val_frac,
+                random_state=42,
+            )
+
+        if test_obs_set is not None:
+            test_idx = [
+                i for i, node_list in enumerate(filtered_original_node_ids)
+                if node_id_list[node_list[0]] in test_obs_set
+            ]
+        else:
+            test_idx = [
+                i for i, node_list in enumerate(filtered_original_node_ids)
+                if node_id_list[node_list[0]] not in train_obs_set
+            ]
         predefined_split = {"train_idx": train_idx, "val_idx": val_idx, "test_idx": test_idx}
         print(f"Using predefined split: {len(train_idx)} train, {len(val_idx)} val, {len(test_idx)} test")
     else:
