@@ -72,13 +72,36 @@ class CustomGATConv(nn.Module):
         
         # Compute Key, Query, Value
         K = F.linear(P1, maskedweight)
-        manual_output = P1.unsqueeze(1) * maskedweight.unsqueeze(0)        
         Q = self.W_query(P2)
-        Q_expanded = Q.unsqueeze(-1)
-
-        # Perform element-wise multiplication
-        communication = manual_output * Q_expanded
         V = self.W_value(P2)
+
+        # The communication tensor [N_nodes, p2_channels, p1_channels] is only needed
+        # for post-hoc analysis (eval mode). Skip it during training to save memory.
+        if not self.training:
+            # With ~20 K genes the full [N, p2, p1] tensor is ~14 GiB in float32.
+            # Strategy: pre-allocate once in float16 (~7 GiB) to stay on GPU, then
+            # fill it in-place in chunks of p2_channels so the only extra GPU
+            # allocation per step is [N, chunk_size, p1] (~100 MB), not a second
+            # full copy of the tensor.
+            device = P1.device
+            N = P1.shape[0]
+            p2, p1 = maskedweight.shape
+            chunk_size = 256
+            communication = torch.empty(N, p2, p1, device=device, dtype=torch.float16)
+            P1_h = P1.half()
+            mw_h = maskedweight.half()
+            Q_h = Q.half()
+            for j_start in range(0, p2, chunk_size):
+                j_end = min(j_start + chunk_size, p2)
+                # [N, 1, p1] * [1, chunk, p1] * [N, chunk, 1] → [N, chunk, p1]
+                communication[:, j_start:j_end, :] = (
+                    P1_h.unsqueeze(1)
+                    * mw_h[j_start:j_end].unsqueeze(0)
+                    * Q_h[:, j_start:j_end].unsqueeze(-1)
+                )
+            del P1_h, mw_h, Q_h
+        else:
+            communication = None
         
         # Querying
         alpha = Q * K 
